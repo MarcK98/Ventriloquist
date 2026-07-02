@@ -56,7 +56,8 @@ const APPROVAL_MCP_PATH = fileURLToPath(
 );
 
 function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
-  const { bin, model, persistSessions, extraArgs, timeoutMs } = config.claude;
+  const { bin, model, persistSessions, extraArgs, timeoutMs, toolTimeoutMs } =
+    config.claude;
   const cwd = cwdOverride || config.claude.cwd;
 
   // stream-json emits one JSON event per line as Claude works
@@ -109,22 +110,34 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
     let stderr = "";
     let lineBuf = "";
     let timedOut = false;
+    let timedOutInTool = false; // which limit fired, for the message
+    let timedOutLimitMs = timeoutMs;
     let streamed = 0;
+    let pendingTools = 0; // tool_use events seen but not yet resolved
     let result = null; // final { text, isError } from the "result" event
 
     // ── Inactivity timeout ───────────────────────────────────────────────
     // The clock only counts silence: every event Claude emits resets it,
     // and it's paused entirely while an approval prompt waits on a human.
+    //
+    // A running tool (build, test suite, `gh run watch`, a CI poll, …) emits
+    // NO events while it works, so silence there is expected — not a hang.
+    // While a tool is in flight we therefore allow the much larger
+    // toolTimeoutMs instead of the short idle timeoutMs.
     let timer = null;
     let paused = 0;
 
     const armTimer = () => {
       clearTimeout(timer);
       if (paused > 0) return;
+      const inTool = pendingTools > 0;
+      const limit = inTool ? toolTimeoutMs : timeoutMs;
       timer = setTimeout(() => {
         timedOut = true;
+        timedOutInTool = inTool;
+        timedOutLimitMs = limit;
         child.kill("SIGKILL");
-      }, timeoutMs);
+      }, limit);
     };
 
     activeRuns.set(sessionKey, {
@@ -157,7 +170,11 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
       }
 
       if (ev.type === "assistant") {
-        const text = (ev.message?.content ?? [])
+        const blocks = ev.message?.content ?? [];
+        // A tool the assistant is about to run — its result arrives later as a
+        // "user" tool_result event. Track the gap so the timer can be lenient.
+        pendingTools += blocks.filter((b) => b.type === "tool_use").length;
+        const text = blocks
           .filter((b) => b.type === "text" && b.text?.trim())
           .map((b) => b.text)
           .join("\n");
@@ -169,7 +186,14 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
             log.warn("[claude] onText handler failed:", err.message);
           }
         }
+      } else if (ev.type === "user") {
+        const blocks = ev.message?.content;
+        if (Array.isArray(blocks)) {
+          const done = blocks.filter((b) => b.type === "tool_result").length;
+          pendingTools = Math.max(0, pendingTools - done);
+        }
       } else if (ev.type === "result") {
+        pendingTools = 0; // turn is over; self-heal any counting drift
         result = {
           text: ev.result ?? "",
           isError: Boolean(ev.is_error),
@@ -178,7 +202,6 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
     };
 
     child.stdout.on("data", (d) => {
-      armTimer();
       lineBuf += d;
       let idx;
       while ((idx = lineBuf.indexOf("\n")) !== -1) {
@@ -186,6 +209,9 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
         lineBuf = lineBuf.slice(idx + 1);
         if (line) handleEvent(line);
       }
+      // Re-arm AFTER parsing, so the limit reflects the current tool state
+      // (a tool_use just seen means we should now allow the longer window).
+      armTimer();
     });
 
     child.stderr.on("data", (d) => {
@@ -210,9 +236,12 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
       if (lineBuf.trim()) handleEvent(lineBuf.trim());
 
       if (timedOut) {
+        const secs = Math.round(timedOutLimitMs / 1000);
         return finish({
           ok: false,
-          text: `Claude timed out after ${timeoutMs / 1000}s of inactivity.`,
+          text: timedOutInTool
+            ? `Claude timed out: a tool ran for over ${secs}s without finishing (raise CLAUDE_TOOL_TIMEOUT_SECONDS).`
+            : `Claude timed out after ${secs}s of inactivity (raise CLAUDE_TIMEOUT_SECONDS).`,
         });
       }
 

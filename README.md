@@ -77,6 +77,18 @@ Plumbing: `claude -p` runs with `--permission-prompt-tool mcp__approver__approve
 
 If Claude asks a clarifying question, it arrives as a normal reply — just answer in the channel (@mention it again if `DISCORD_REQUIRE_MENTION=true`); `--resume` continues the same conversation.
 
+## Timeouts
+
+Two limits guard a run, so long jobs don't get killed but true hangs still do:
+
+- `CLAUDE_TIMEOUT_SECONDS` — **idle** limit: how long Claude may go silent
+  *between* actions. Resets on every event; pauses while an approval waits on you.
+- `CLAUDE_TOOL_TIMEOUT_SECONDS` — **tool** limit: how long a single running tool
+  (build, test suite, `gh run watch`, a CI poll) may work with no output. A busy
+  tool emits nothing, so the idle limit is suspended while one runs.
+
+If Claude waits on long CI, raise `CLAUDE_TOOL_TIMEOUT_SECONDS` (default 1800s).
+
 ## Adding more channels
 
 Write an adapter in `src/channels/<name>.js` exporting an async `start<Name>()` that returns a `stop()` function, register it in `ADAPTERS` in `src/index.js`, and add `<name>` to `CHANNELS` in `.env`. Telegram (`node-telegram-bot-api`, long polling) and Slack (`@slack/bolt` Socket Mode) both work locally without a public URL.

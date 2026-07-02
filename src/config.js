@@ -67,9 +67,14 @@ export const config = {
     permissionMode: process.env.CLAUDE_PERMISSION_MODE || "",
     persistSessions: bool(process.env.CLAUDE_PERSIST_SESSIONS, true),
     extraArgs: tokenizeArgs(process.env.CLAUDE_EXTRA_ARGS || ""),
-    // Inactivity timeout: how long Claude may go silent before the run is
-    // killed. Reset on every stream event, paused during approval prompts.
+    // Idle timeout: how long Claude may go silent *between* actions before the
+    // run is killed. Reset on every stream event, paused during approval prompts.
     timeoutMs:
       (Number(process.env.CLAUDE_TIMEOUT_SECONDS) || 180) * 1000,
+    // Tool timeout: how long a single running tool (build, test suite,
+    // `gh run watch`, a CI poll, …) may work with no output before being
+    // killed. Much larger than the idle timeout, since a busy tool is silent.
+    toolTimeoutMs:
+      (Number(process.env.CLAUDE_TOOL_TIMEOUT_SECONDS) || 1800) * 1000,
   },
 };
