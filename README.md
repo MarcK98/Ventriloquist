@@ -55,14 +55,24 @@ Slash commands work from Discord. Two kinds:
   - `/stop` — cancel the run in progress
   - `/help` — list bridge commands plus the custom commands / skills available
     in this channel's project
+  - `/status` — model + a summary of the last run
+  - `/cost` — cost and token usage of the last run
+  - `/model [name]` — show or set this channel's model (e.g. `/model sonnet`)
+  - `/mcp` — list this project's MCP servers
+  - `/agents` — list available subagents
 - **Claude Code commands** — anything else starting with `/` is passed straight
   to `claude -p`, so your project `.claude/commands/` and skills (e.g.
   `/code-review`) just work.
 
-Interactive, terminal-only commands (`/workflows`, `/status`, `/clear`, …) can't
-run headlessly — Claude Code reports they aren't available, and the bridge adds a
-hint pointing you at what does work. In a server, prefix with a mention if
+`/status`, `/cost`, `/model`, `/mcp`, and `/agents` are reimplemented by the
+bridge from data it already has, because the real ones are interactive. Other
+terminal-only commands (`/workflows`, `/config`, …) can't run headlessly — the
+bridge replies with a hint. In a server, prefix with a mention if
 `DISCORD_REQUIRE_MENTION=true` (e.g. `@bot /reset`).
+
+**Live progress** — during a run the bridge posts a status message that updates
+in place with the tool Claude is currently running (great for long CI waits).
+Toggle with `PROGRESS_ENABLED`.
 
 ## Per-channel projects
 

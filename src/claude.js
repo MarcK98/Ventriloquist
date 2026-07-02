@@ -53,6 +53,20 @@ export const resetSession = (sessionKey) => {
   return true;
 };
 
+// Per-channel model override (the `/model` bridge command). In-memory only —
+// resets on restart. Empty/undefined clears it back to the configured default.
+const modelOverrides = new Map();
+export const setModel = (sessionKey, model) => {
+  if (model) modelOverrides.set(sessionKey, model);
+  else modelOverrides.delete(sessionKey);
+};
+export const getModel = (sessionKey) =>
+  modelOverrides.get(sessionKey) || config.claude.model || "";
+
+// Stats from the most recent completed run per channel (`/status`, `/cost`).
+const lastStats = new Map();
+export const getLastStats = (sessionKey) => lastStats.get(sessionKey) || null;
+
 /**
  * Ask Claude. `onText(text)` is called with each assistant message's text
  * as it streams in (i.e. between tool calls), so adapters can relay
@@ -74,8 +88,9 @@ const APPROVAL_MCP_PATH = fileURLToPath(
 );
 
 function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
-  const { bin, model, persistSessions, extraArgs, timeoutMs, toolTimeoutMs } =
+  const { bin, persistSessions, extraArgs, timeoutMs, toolTimeoutMs } =
     config.claude;
+  const model = modelOverrides.get(sessionKey) || config.claude.model;
   const cwd = cwdOverride || config.claude.cwd;
 
   // stream-json emits one JSON event per line as Claude works
@@ -196,8 +211,19 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
       if (ev.type === "assistant") {
         const blocks = ev.message?.content ?? [];
         // A tool the assistant is about to run — its result arrives later as a
-        // "user" tool_result event. Track the gap so the timer can be lenient.
-        pendingTools += blocks.filter((b) => b.type === "tool_use").length;
+        // "user" tool_result event. Track the gap so the timer can be lenient,
+        // and surface each tool as live progress (feature C).
+        for (const b of blocks) {
+          if (b.type !== "tool_use") continue;
+          pendingTools++;
+          if (opts.onProgress) {
+            try {
+              opts.onProgress({ tool: b.name, input: b.input ?? {} });
+            } catch (err) {
+              log.warn("[claude] onProgress handler failed:", err.message);
+            }
+          }
+        }
         const text = blocks
           .filter((b) => b.type === "text" && b.text?.trim())
           .map((b) => b.text)
@@ -218,6 +244,15 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
         }
       } else if (ev.type === "result") {
         pendingTools = 0; // turn is over; self-heal any counting drift
+        lastStats.set(sessionKey, {
+          costUsd: ev.total_cost_usd,
+          usage: ev.usage ?? null,
+          model: Object.keys(ev.modelUsage ?? {})[0] || model,
+          durationMs: ev.duration_ms,
+          numTurns: ev.num_turns,
+          sessionId: ev.session_id,
+          at: Date.now(),
+        });
         result = {
           text: ev.result ?? "",
           isError: Boolean(ev.is_error),

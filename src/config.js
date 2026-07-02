@@ -50,6 +50,12 @@ export const config = {
     maxMb: Number(process.env.ATTACHMENT_MAX_MB) || 25,
   },
 
+  progress: {
+    // Post a live, in-place-updated status message showing the tool Claude is
+    // currently running (nice for long CI waits / multi-step work).
+    enabled: bool(process.env.PROGRESS_ENABLED, true),
+  },
+
   approvals: {
     // Route Claude's permission prompts (run command, edit file, …) to Discord.
     enabled: bool(process.env.APPROVALS_ENABLED, true),

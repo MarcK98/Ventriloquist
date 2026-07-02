@@ -15,7 +15,11 @@ import { askClaude } from "../claude.js";
 import { resolveProject } from "../projects.js";
 import { setPermissionHandler } from "../permission-server.js";
 import { downloadAttachments, cleanupAttachments } from "../attachments.js";
-import { runBridgeCommand, isInteractiveCommandMiss } from "../commands.js";
+import {
+  runBridgeCommand,
+  isInteractiveCommandMiss,
+  progressLabel,
+} from "../commands.js";
 
 const MAX_DISCORD_LEN = 2000;
 
@@ -221,12 +225,53 @@ export async function startDiscord() {
         return sendQueue;
       };
 
+      // Live progress (feature C): one status message showing the tool Claude
+      // is currently running, edited in place and throttled to dodge rate
+      // limits. Removed when the run finishes — the real output is streamed.
+      let statusMsg = null;
+      let statusChain = Promise.resolve();
+      let statusLatest = "";
+      let statusSteps = 0;
+      let lastStatusEdit = 0;
+      const STATUS_THROTTLE_MS = 1500;
+
+      const flushStatus = () => {
+        const text = `⏳ Working — ${statusSteps} step${
+          statusSteps === 1 ? "" : "s"
+        }\n${statusLatest}`.slice(0, MAX_DISCORD_LEN);
+        statusChain = statusChain.then(async () => {
+          if (statusMsg) await statusMsg.edit(text).catch(() => {});
+          else statusMsg = await message.channel.send(text).catch(() => null);
+        });
+      };
+
+      const onProgress = config.progress.enabled
+        ? (ev) => {
+            statusSteps++;
+            statusLatest = progressLabel(ev);
+            const now = Date.now();
+            if (now - lastStatusEdit >= STATUS_THROTTLE_MS) {
+              lastStatusEdit = now;
+              flushStatus();
+            }
+          }
+        : undefined;
+
+      const clearStatus = () =>
+        (statusChain = statusChain.then(async () => {
+          if (statusMsg) await statusMsg.delete().catch(() => {});
+          statusMsg = null;
+        }));
+
       const res = await askClaude(sessionKey, prompt, projectDir, send, {
         addDirs,
+        onProgress,
       }).finally(() => {
         clearInterval(typing);
         cleanupAttachments(attachmentDir);
       });
+
+      await clearStatus();
 
       // Everything Claude said was already streamed via onText; the final
       // result is just the last assistant message again. Only send it if
@@ -239,8 +284,8 @@ export async function startDiscord() {
       // toward what the bridge can actually do.
       if (isInteractiveCommandMiss(userText, res.text)) {
         send(
-          "ℹ️ That's an interactive-only Claude Code command (needs a terminal). " +
-            "From here you can use `/reset`, `/stop`, `/help`, plus custom project commands and skills."
+          "ℹ️ That command needs a terminal, so it can't run here. Try `/help` — " +
+            "the bridge supports `/status`, `/cost`, `/model`, `/mcp`, `/agents`, `/reset`, `/stop`."
         );
       }
       await sendQueue;
