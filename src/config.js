@@ -67,7 +67,7 @@ export const config = {
       : ["/workflows"]
     ).map((s) => s.toLowerCase()),
     // Auto-close a terminal after this much silence (no output, no input).
-    idleMs: (Number(process.env.TERMINAL_IDLE_SECONDS) || 900) * 1000,
+    idleMs: (Number(process.env.TERMINAL_IDLE_SECONDS) || 3600) * 1000,
     // Emulated screen size. Kept small so a full screen fits one Discord message.
     cols: 80,
     rows: 24,
