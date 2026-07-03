@@ -48,4 +48,52 @@ server.tool(
   }
 );
 
+// ── PR review loop tools ─────────────────────────────────────────────────────
+// These forward to the bridge, which drives the review/fix/merge conversation
+// in a Discord thread. Coding agents call notify_pr_reviewer; the reviewer agent
+// calls pr_request_changes / pr_ready_to_merge.
+const postPr = async (path, body) => {
+  try {
+    await fetch(`http://127.0.0.1:${PORT}/pr/${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    return "ok";
+  } catch (err) {
+    return `error: ${err.message}`;
+  }
+};
+
+server.tool(
+  "notify_pr_reviewer",
+  "After opening or pushing to a pull request, ask the PR reviewer bot to (re)review it. Only available under the Discord bridge.",
+  { pr_url: z.string() },
+  async ({ pr_url }) => {
+    const r = await postPr("notify", { prUrl: pr_url, originSessionKey: SESSION_KEY });
+    return { content: [{ type: "text", text: `notify_pr_reviewer: ${r}` }] };
+  }
+);
+
+server.tool(
+  "pr_request_changes",
+  "Reviewer only: report that a PR needs changes; the bridge routes the fix back to the author.",
+  { pr_url: z.string(), summary: z.string() },
+  async ({ pr_url, summary }) => {
+    const r = await postPr("request-changes", { prUrl: pr_url, summary });
+    return { content: [{ type: "text", text: `pr_request_changes: ${r}` }] };
+  }
+);
+
+server.tool(
+  "pr_ready_to_merge",
+  "Reviewer only: report that a PR is approved; the bridge asks the human to merge.",
+  { pr_url: z.string(), summary: z.string().optional() },
+  async ({ pr_url, summary }) => {
+    const r = await postPr("ready-to-merge", { prUrl: pr_url, summary: summary ?? "" });
+    return { content: [{ type: "text", text: `pr_ready_to_merge: ${r}` }] };
+  }
+);
+
 await server.connect(new StdioServerTransport());
