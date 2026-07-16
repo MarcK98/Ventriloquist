@@ -13,3 +13,5 @@ projects.json
 spawn.db
 spawn.db-*
 packages/desktop/dist/
+spawn-daemon.token
+spawn-daemon-sessions.json

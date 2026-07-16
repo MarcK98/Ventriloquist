@@ -1,12 +1,18 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import WebSocket from "ws";
+import { dataPath } from "@spawn/core/config";
 
 // Client for the Spawn daemon (a separate background process). The desktop
 // app NEVER touches sessions or SQLite directly — everything goes through
 // the daemon's localhost API. If no daemon is running we start one, detached,
 // so it outlives the app window.
+//
+// Auth: the daemon writes a per-start secret to spawn-daemon.token (0600) in
+// SPAWN_DATA_DIR; we read it fresh for every call (it rotates whenever the
+// daemon restarts) and send it as x-spawn-token. Browsers can't read local
+// files, which is the point — see server.js for the threat model.
 
 const require = createRequire(import.meta.url);
 const PORT = Number(process.env.SPAWN_DAEMON_PORT) || 8791;
@@ -16,6 +22,14 @@ const SERVER_JS = require.resolve("@spawn/core/package.json").replace(
   /package\.json$/,
   "src/daemon/server.js"
 );
+
+const readToken = () => {
+  try {
+    return readFileSync(dataPath("spawn-daemon.token"), "utf8").trim();
+  } catch {
+    return "";
+  }
+};
 
 // The daemon is plain Node (Electron's binary won't do): prefer an explicit
 // override, then Homebrew node, then whatever PATH has.
@@ -52,7 +66,10 @@ export async function ensureDaemon() {
 export async function rpc(method, ...args) {
   const res = await fetch(`${BASE}/rpc`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-spawn-token": readToken(),
+    },
     body: JSON.stringify({ method, args }),
   });
   const body = await res.json();
@@ -60,13 +77,16 @@ export async function rpc(method, ...args) {
   return body.result;
 }
 
-// Subscribe to daemon events; reconnects if the daemon restarts.
+// Subscribe to daemon events; reconnects (with a fresh token) if the daemon
+// restarts.
 export function subscribeEvents(onEvent) {
   let ws;
   let closed = false;
   const connect = () => {
     if (closed) return;
-    ws = new WebSocket(`ws://127.0.0.1:${PORT}/events`);
+    ws = new WebSocket(`ws://127.0.0.1:${PORT}/events`, {
+      headers: { "x-spawn-token": readToken() },
+    });
     ws.on("message", (data) => {
       try {
         onEvent(JSON.parse(data.toString()));
