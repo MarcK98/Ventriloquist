@@ -1,11 +1,12 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { log } from "./logger.js";
+import { dataPath } from "./config.js";
 
 // Append-only usage ledger for bridge-driven runs. One JSON object per line.
 // This is the ONLY source with exact channel / team-lead attribution — the
 // Claude Code JSONL logs know the model + tokens but not which Discord channel
 // or team-lead triggered the run. Gitignored; safe to delete to reset history.
-const USAGE_FILE = new URL("../usage.jsonl", import.meta.url);
+const USAGE_FILE = dataPath("usage.jsonl");
 
 // Record one completed run. Called from claude.js on the CLI "result" event.
 // `meta` carries adapter-supplied attribution: { channelName, source }.

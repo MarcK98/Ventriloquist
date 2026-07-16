@@ -1,4 +1,16 @@
-import "dotenv/config";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import dotenv from "dotenv";
+
+// Monorepo root (packages/core/src -> three levels up). Runtime state
+// (sessions.json, usage.jsonl, .env, projects.json, the SQLite db) lives here
+// regardless of cwd, so the bridge, the desktop app, and one-off scripts all
+// see the same state. Override with SPAWN_DATA_DIR.
+const ROOT_DIR = fileURLToPath(new URL("../../..", import.meta.url));
+export const dataDir = process.env.SPAWN_DATA_DIR || ROOT_DIR;
+export const dataPath = (name) => join(dataDir, name);
+
+dotenv.config({ path: join(dataDir, ".env") });
 
 const bool = (v, def = false) => {
   if (v === undefined || v === "") return def;

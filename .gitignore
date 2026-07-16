@@ -8,3 +8,8 @@ projects.json
 
 # Trello sync poll cursor (runtime state)
 .trello-state.json
+
+# Spawn desktop / monorepo
+spawn.db
+spawn.db-*
+packages/desktop/dist/

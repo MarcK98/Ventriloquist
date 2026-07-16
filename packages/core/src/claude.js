@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { config } from "./config.js";
+import { config, dataPath } from "./config.js";
 import { log } from "./logger.js";
 import { recordUsage } from "./usage-log.js";
 
-const SESSIONS_FILE = new URL("../sessions.json", import.meta.url);
+const SESSIONS_FILE = dataPath("sessions.json");
 
 // sessionKey (e.g. "discord:123456") -> claude session_id
 let sessions = {};
@@ -105,8 +105,10 @@ function browserMcpArgs() {
 }
 
 function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
-  const { bin, persistSessions, extraArgs, timeoutMs, toolTimeoutMs } =
-    config.claude;
+  const { bin, extraArgs, timeoutMs, toolTimeoutMs } = config.claude;
+  // Per-run override: opts.persistSessions=false makes this an ephemeral run
+  // (no --resume in, no session id stored) — used for isolated ticket threads.
+  const persistSessions = opts.persistSessions ?? config.claude.persistSessions;
   // Model/effort precedence: an explicit per-run opt (heartbeat, delegation)
   // wins over the channel's /model override, which wins over the config default.
   const model = opts.model || modelOverrides.get(sessionKey) || config.claude.model;

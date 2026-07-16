@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { config } from "./config.js";
+import { config, dataPath } from "./config.js";
 import { log } from "./logger.js";
 
 // Optional explicit overrides: projects.json in the repo root
 //   { "channel-name-or-id": "/absolute/path/to/project", ... }
-const PROJECTS_FILE = new URL("../projects.json", import.meta.url);
+const PROJECTS_FILE = dataPath("projects.json");
 
 let overrides = {};
 try {
@@ -13,6 +13,10 @@ try {
 } catch {
   /* optional file */
 }
+
+// Explicit projects.json overrides (name-or-channel-id -> dir), for consumers
+// beyond channel resolution (the Spawn daemon unions these into its registry).
+export const getOverrides = () => ({ ...overrides });
 
 const isDir = (p) => {
   try {

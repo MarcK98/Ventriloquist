@@ -1,10 +1,9 @@
 import { createServer } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, realpathSync, statSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { basename, isAbsolute, resolve as resolvePath, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { config } from "./config.js";
+import { config, dataPath } from "./config.js";
 import { log } from "./logger.js";
 
 // Two-way sync between the team lead's TASKS.md and a Trello board.
@@ -483,7 +482,7 @@ export async function readBoard({ limit = 20, cardKey } = {}) {
 // fresh baseline swallows whatever exists at startup — so without this, a comment
 // or move made in that gap would be lost forever. With it, the first poll after a
 // restart reports everything newer than the saved cursor.
-const STATE_FILE = fileURLToPath(new URL("../.trello-state.json", import.meta.url));
+const STATE_FILE = dataPath(".trello-state.json");
 let baselined = false; // until baselined, the first poll only records (no report)
 let lastActionDate = ""; // ISO cursor for the commentCard actions feed
 const pendingForTick = []; // change lines the next heartbeat tick will reconcile

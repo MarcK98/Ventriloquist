@@ -1,6 +1,21 @@
-# claude-channel-bridge
+# Spawn (claude-spawn monorepo)
 
-Local Node server that watches chat channels (Discord for now) and forwards every incoming message to Claude Code (`claude -p`), replying in the channel with Claude's output.
+Local interface to Claude Code team-lead/agents — working toward **spawnmy.ai**.
+
+```
+packages/core     @spawn/core — orchestration: sessions, projects, team lead,
+                  approvals, usage, SQLite store, AgentProvider seam.
+                  Also still hosts the legacy Discord bridge (src/index.js).
+packages/desktop  @spawn/desktop — Electron + React app (Phase 0 shell).
+src/              compatibility shims only (keep `node src/index.js` working
+                  for the running bridge until the Discord hard-cut).
+```
+
+Desktop dev: `npm run desktop`. Design doc: `docs/desktop-app-plan.md`.
+
+## Legacy Discord bridge
+
+Local Node server that watches chat channels (Discord for now) and forwards every incoming message to Claude Code (`claude -p`), replying in the channel with Claude's output. Paths below refer to `packages/core/src/` (root `src/` re-exports it).
 
 ## Setup
 
