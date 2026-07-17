@@ -16,8 +16,15 @@ const DEFAULTS = {
   defaultModel: "", // empty = harness default
   defaultEffort: "", // empty = harness default; per-run opts still win
   isolation: true, // worktree-per-ticket for delegations into git projects
-  mcps: [], // MCP server names enabled for this project
-  skills: [], // skill names enabled for this project
+  // Per-project MCP servers, merged into every run's --mcp-config when
+  // enabled: {name, transport: "stdio"|"http", command?, url?, enabled}.
+  // `command` is one shell-like line (tokenized daemon-side). No env/secrets
+  // here by the settings-table rule — servers inherit the daemon's env.
+  mcpServers: [],
+  // Skills the agent may NOT use in this project (denied via
+  // --disallowedTools "Skill(name)"). Everything discovered is allowed by
+  // default; this is the unchecked set in the settings UI.
+  disabledSkills: [],
 };
 
 // Secrets stay in-memory on purpose: Phase 1 ships no secret-editing UI, and

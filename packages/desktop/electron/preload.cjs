@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("spawn", {
   listDecisions: () => ipcRenderer.invoke("spawn:listDecisions"),
   getUsage: (days) => ipcRenderer.invoke("spawn:getUsage", days),
   resetThreadSession: (threadId) => ipcRenderer.invoke("spawn:resetThreadSession", threadId),
+  listSkills: (projectId) => ipcRenderer.invoke("spawn:listSkills", projectId),
   onEvent: (fn) => {
     const handler = (_e, ev) => fn(ev);
     ipcRenderer.on("spawn:event", handler);

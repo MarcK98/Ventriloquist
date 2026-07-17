@@ -26,7 +26,8 @@ const list = (v) =>
 // Split a shell-like arg string into tokens, respecting single/double quotes.
 // e.g.  --allowedTools "Read,Grep" --permission-mode plan
 //   ->  ["--allowedTools", "Read,Grep", "--permission-mode", "plan"]
-const tokenizeArgs = (v) => {
+// Exported: the daemon uses it to tokenize per-project MCP server commands.
+export const tokenizeArgs = (v) => {
   const out = [];
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
   let m;

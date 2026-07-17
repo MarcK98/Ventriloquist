@@ -194,8 +194,11 @@ const defaultSettings = (): ProjectSettings => ({
   defaultModel: "sonnet",
   defaultEffort: "medium",
   isolation: true,
-  mcps: [],
-  skills: [],
+  mcpServers: [
+    { name: "trello", transport: "stdio", command: "npx @spawn/mcp-trello", enabled: true },
+    { name: "sentry", transport: "http", url: "https://mcp.sentry.dev", enabled: false },
+  ],
+  disabledSkills: ["deck-builder"],
 });
 
 const map: MapData = {
@@ -236,6 +239,15 @@ export function installMock() {
     listDecisions: async () => decisions,
     getUsage: async () => usage,
     resetThreadSession: async () => true,
+    listSkills: async (projectId) => {
+      const disabled = new Set((settingsByProject.get(projectId) ?? defaultSettings()).disabledSkills);
+      return [
+        { name: "code-review", scope: "project" as const, description: "Review the diff", enabled: !disabled.has("code-review") },
+        { name: "release-notes", scope: "project" as const, description: "Draft release notes", enabled: !disabled.has("release-notes") },
+        { name: "deck-builder", scope: "user" as const, description: "Build slide decks", enabled: !disabled.has("deck-builder") },
+        { name: "pdf-reader", scope: "user" as const, description: "Read PDFs", enabled: !disabled.has("pdf-reader") },
+      ];
+    },
     onEvent: () => () => {},
   };
 }

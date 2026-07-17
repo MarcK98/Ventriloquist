@@ -173,12 +173,23 @@ function run(sessionKey, prompt, cwdOverride, onText, opts = {}) {
       args: browserMcpArgs(),
     };
   }
+  // Per-run extra servers (the Spawn daemon's per-project MCP settings).
+  // Merged last but never over the built-ins above.
+  for (const [name, def] of Object.entries(opts.mcpServers ?? {})) {
+    if (!(name in mcpServers)) mcpServers[name] = def;
+  }
   if (Object.keys(mcpServers).length) {
     args.push("--mcp-config", JSON.stringify({ mcpServers }));
   }
   // The permission-prompt tool only exists when the approver server is loaded.
   if (approvals) {
     args.push("--permission-prompt-tool", "mcp__approver__approve");
+  }
+
+  // Per-run tool denials (e.g. Skill(name) — the daemon's per-project skill
+  // toggles). The CLI accepts repeated rules after one flag.
+  if (opts.disallowedTools?.length) {
+    args.push("--disallowedTools", ...opts.disallowedTools);
   }
 
   args.push(...extraArgs);

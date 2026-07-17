@@ -34,14 +34,33 @@ export interface Message {
 
 // Client-visible per-project settings (daemon/project-settings.js — secrets
 // never appear here by construction).
+// One per-project MCP server (settings page). `command` is a single
+// shell-like line for stdio servers; `url` for http. No env/secrets stored.
+export interface McpServerDef {
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  url?: string;
+  enabled: boolean;
+}
+
 export interface ProjectSettings {
   approvalMode: "prompt" | "auto";
   allowedModels: string[];
   defaultModel: string;
   defaultEffort: string;
   isolation: boolean;
-  mcps: string[];
-  skills: string[];
+  mcpServers: McpServerDef[];
+  disabledSkills: string[];
+}
+
+// A discovered skill (project .claude/skills or user ~/.claude/skills),
+// with its per-project enablement resolved (daemon listSkills).
+export interface SkillInfo {
+  name: string;
+  scope: "project" | "user";
+  description: string;
+  enabled: boolean;
 }
 
 // A pending permission prompt from a run in "prompt" approval mode.
@@ -234,6 +253,7 @@ declare global {
       listDecisions(): Promise<ApprovalDecision[]>;
       getUsage(days?: number): Promise<UsageSummary>;
       resetThreadSession(threadId: number): Promise<boolean>;
+      listSkills(projectId: number): Promise<SkillInfo[]>;
       onEvent(fn: (ev: SpawnEvent) => void): () => void;
     };
   }

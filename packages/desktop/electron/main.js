@@ -71,6 +71,7 @@ ipcMain.handle("spawn:listApprovals", () => rpc("listApprovals"));
 ipcMain.handle("spawn:listDecisions", () => rpc("listDecisions"));
 ipcMain.handle("spawn:getUsage", (_e, days) => rpc("getUsage", days));
 ipcMain.handle("spawn:resetThreadSession", (_e, threadId) => rpc("resetThreadSession", threadId));
+ipcMain.handle("spawn:listSkills", (_e, projectId) => rpc("listSkills", projectId));
 
 app.whenReady().then(async () => {
   // CI/agent smoke: prove daemon spawn + RPC round-trip, then exit.

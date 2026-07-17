@@ -229,6 +229,21 @@ select.f-select { width: 100%; background: var(--color-neutral-900); border: 1px
 .seg2 button { padding: 5px 16px; border-radius: 6px; border: 0; background: none; color: var(--color-neutral-500); font-size: 12px; cursor: pointer; font-family: inherit; }
 .seg2 button.on { background: color-mix(in srgb, var(--color-accent) 16%, transparent); color: var(--color-accent-200); }
 
+/* Per-project MCP servers + skills (settings) */
+.mcp-row { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: var(--radius-md); background: var(--color-neutral-900); margin-bottom: 8px; }
+.mcp-row .body { min-width: 0; flex: 1; }
+.mcp-row .n { font-size: 12.5px; }
+.mcp-row .c { font-size: 10.5px; color: var(--color-neutral-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-x { background: none; border: 0; color: var(--color-neutral-600); cursor: pointer; font-size: 13px; padding: 2px; }
+.mcp-x:hover { color: oklch(0.68 0.14 25); }
+.mcp-add { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.mcp-add input.f-static { outline: none; color: var(--color-text); font-family: inherit; }
+.mcp-add input.f-static.mono { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.mcp-add input.f-static:focus { border-color: var(--color-accent-700); }
+.skill-row { display: flex; align-items: center; gap: 9px; padding: 6px 4px; font-size: 12.5px; cursor: pointer; }
+.skill-row .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-row input { accent-color: var(--color-accent); }
+
 /* ── Live map ────────────────────────────────────────────────────────────── */
 .map-view { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 20px 24px; gap: 12px; }
 .map-canvas { flex: 1; min-height: 0; border-radius: var(--radius-md); overflow: hidden; background: radial-gradient(1200px 700px at 42% 45%, #1a1c30, var(--color-bg) 75%); box-shadow: var(--shadow-sm); }

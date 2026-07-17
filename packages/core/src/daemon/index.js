@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, basename } from "node:path";
-import { config } from "../config.js";
+import { config, tokenizeArgs } from "../config.js";
 import { log } from "../logger.js";
 import {
   askClaude,
@@ -109,6 +110,51 @@ export function createDaemon() {
     return dir ? db.upsertProject(basename(dir), dir) : null;
   };
 
+  // Per-project MCP servers → the shape claude.js merges into --mcp-config.
+  // Reserved names (the built-ins) are dropped daemon-side too, so a settings
+  // row can never shadow the approver.
+  const RESERVED_MCP = new Set(["approver", "chrome-devtools"]);
+  const mcpServersFor = (settings) => {
+    const out = {};
+    for (const s of settings.mcpServers ?? []) {
+      if (!s?.enabled || !s.name || RESERVED_MCP.has(s.name)) continue;
+      if (s.transport === "http" && s.url) {
+        out[s.name] = { type: "http", url: s.url };
+      } else if (s.command) {
+        const [command, ...args] = tokenizeArgs(String(s.command));
+        if (command) out[s.name] = { command, args };
+      }
+    }
+    return out;
+  };
+
+  // Skills visible to runs in a project: the project's .claude/skills plus
+  // the user-level ~/.claude/skills. Read fresh per call — skills are files
+  // on disk and can change under us. Description = first non-empty line of
+  // the SKILL.md frontmatter's description, best-effort.
+  const scanSkills = (dir, scope) => {
+    const out = [];
+    try {
+      for (const entry of readdirSync(dir)) {
+        const skillMd = join(dir, entry, "SKILL.md");
+        try {
+          const text = readFileSync(skillMd, "utf8");
+          const m = /^description:\s*(.+)$/m.exec(text);
+          out.push({
+            name: entry,
+            scope,
+            description: m ? m[1].trim().replace(/^["']|["']$/g, "").slice(0, 140) : "",
+          });
+        } catch {
+          /* not a skill dir */
+        }
+      }
+    } catch {
+      /* no skills dir */
+    }
+    return out;
+  };
+
   // Launch one Claude turn in a thread and stream it out as events:
   //   turn:start {threadId} → turn:text {threadId,message}* / turn:tool
   //   {threadId,message}* → turn:done {threadId, ok, ...}
@@ -142,6 +188,9 @@ export function createDaemon() {
         // ticket threads are ephemeral (fresh context per ticket); chat and
         // teamlead threads resume across turns
         persistSessions: thread.kind !== "ticket",
+        // Per-project MCP servers + skill denials (settings page).
+        mcpServers: mcpServersFor(settings),
+        disallowedTools: (settings.disabledSkills ?? []).map((s) => `Skill(${s})`),
         // Approval routing (per-project): "prompt" surfaces permission
         // prompts as approval:* events via the hub; "auto" runs unattended.
         // Prompt mode pins permissionMode to "" — a CLAUDE_PERMISSION_MODE
@@ -192,6 +241,25 @@ export function createDaemon() {
 
     getProjectSettings: (projectId) => getProjectSettings(projectId),
     updateProjectSettings: (projectId, patch) => updateProjectSettings(projectId, patch),
+
+    // Skills available to runs in this project (project .claude/skills +
+    // user ~/.claude/skills), each flagged enabled per the project's
+    // disabledSkills setting.
+    listSkills: (projectId) => {
+      const project = db.listProjects().find((p) => p.id === projectId);
+      if (!project) throw new Error(`No such project: ${projectId}`);
+      const disabled = new Set(getProjectSettings(projectId).disabledSkills ?? []);
+      const seen = new Map(); // name -> skill (project scope wins on collision)
+      for (const s of [
+        ...scanSkills(join(project.dir, ".claude", "skills"), "project"),
+        ...scanSkills(join(homedir(), ".claude", "skills"), "user"),
+      ]) {
+        if (!seen.has(s.name)) seen.set(s.name, s);
+      }
+      return [...seen.values()]
+        .map((s) => ({ ...s, enabled: !disabled.has(s.name) }))
+        .sort((a, b) => a.scope.localeCompare(b.scope) || a.name.localeCompare(b.name));
+    },
 
     listThreads: (projectId) => db.listThreads(projectId),
     getThread: (threadId) => db.getThread(threadId),
