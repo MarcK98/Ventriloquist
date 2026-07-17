@@ -188,6 +188,34 @@ export const updateTicket = (id, fields) => {
     .run(...sets.map((k) => fields[k]), id);
   return getTicket(id);
 };
+// Archive-inclusive search (the team lead's board tool): LIKE over
+// title+body, optional status/project filters, done tickets included.
+export const searchTickets = ({ query = "", status = null, projectId = null, limit = 20 } = {}) => {
+  const d = openDb();
+  const clauses = [];
+  const args = [];
+  if (query) {
+    clauses.push("(k.title LIKE ? OR k.body LIKE ?)");
+    args.push(`%${query}%`, `%${query}%`);
+  }
+  if (status) {
+    clauses.push("k.status = ?");
+    args.push(status);
+  }
+  if (projectId != null) {
+    clauses.push("k.project_id = ?");
+    args.push(projectId);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  return d
+    .prepare(
+      `SELECT k.*, p.name AS project_name FROM tickets k
+       JOIN projects p ON p.id = k.project_id ${where}
+       ORDER BY k.updated_at DESC LIMIT ?`
+    )
+    .all(...args, Math.min(Number(limit) || 20, 50));
+};
+
 export const deleteTicket = (id) => {
   openDb().prepare(`DELETE FROM tickets WHERE id = ?`).run(id);
   return true;

@@ -22,6 +22,10 @@ import {
   prStatus,
 } from "../worktrees.js";
 import { dirFor as deliverablesDirFor, commitAll as commitDeliverables, listFiles as listDeliverableFiles } from "../deliverables.js";
+import { fileURLToPath } from "node:url";
+
+// The team lead's board-archive MCP (spawned inside its Claude runs).
+const BOARD_MCP_PATH = fileURLToPath(new URL("../mcp/board-server.js", import.meta.url));
 import { getOverrides, resolveProject } from "../projects.js";
 // No Trello here — the Orchestrate board is native (the tickets table is the
 // source of truth). The Discord bridge keeps its own Trello sync; the daemon
@@ -217,7 +221,7 @@ export function createDaemon() {
         const run = k.thread_id != null && getActiveRun(threadKey(k.thread_id)) ? " · running" : "";
         return `- SPWN-${k.id} [${k.status}] ${k.project_name}: ${k.title}${k.branch ? ` (${k.branch})` : ""}${run}`;
       });
-      boardNote = `## Board (open tickets)\n${lines.length ? lines.join("\n") : "No open tickets."}${open.length > 60 ? `\n…and ${open.length - 60} more.` : ""}\nCompleted tickets are archived in the board's Done column and intentionally omitted here.`;
+      boardNote = `## Board (open tickets)\n${lines.length ? lines.join("\n") : "No open tickets."}${open.length > 60 ? `\n…and ${open.length - 60} more.` : ""}\nCompleted tickets are archived in the board's Done column and intentionally omitted here. To look up past/finished work when asked, search the archive with the board tools: mcp__board__search_tickets and mcp__board__get_ticket.`;
     }
 
     let seq = 0;
@@ -243,8 +247,14 @@ export function createDaemon() {
         // ticket threads are ephemeral (fresh context per ticket); chat and
         // teamlead threads resume across turns
         persistSessions: thread.kind !== "ticket",
-        // Per-project MCP servers + skill denials (settings page).
-        mcpServers: mcpServersFor(settings),
+        // Per-project MCP servers + skill denials (settings page). Team-lead
+        // runs also get the board archive tools (search incl. done tickets).
+        mcpServers: {
+          ...mcpServersFor(settings),
+          ...(thread.kind === "teamlead"
+            ? { board: { command: process.execPath, args: [BOARD_MCP_PATH] } }
+            : {}),
+        },
         disallowedTools: (settings.disabledSkills ?? []).map((s) => `Skill(${s})`),
         // Rules / memory / connections + the deliverables note, as a
         // system-prompt suffix.
@@ -413,6 +423,31 @@ export function createDaemon() {
       }
       emit("ticket:updated", ticket);
       return ticket;
+    },
+
+    // Archive search for the team lead's board tool — done tickets included.
+    // `project` is a name (how the lead sees them); resolved to an id here.
+    searchTickets: ({ query, status, project, limit } = {}) => {
+      const projectId = project
+        ? (db.listProjects().find((p) => p.name === project)?.id ?? -1)
+        : null;
+      return db.searchTickets({ query, status, projectId, limit });
+    },
+
+    // One ticket with its outcome: the closing assistant/system lines of its
+    // thread, so "what happened with X?" is answerable from the archive.
+    getTicketDetail: (ticketId) => {
+      const ticket = db.getTicket(ticketId);
+      if (!ticket) throw new Error(`No such ticket: ${ticketId}`);
+      let outcome = [];
+      if (ticket.thread_id) {
+        outcome = db
+          .listMessages(ticket.thread_id, { limit: 50 })
+          .filter((m) => m.role === "assistant" || m.role === "system")
+          .slice(-3)
+          .map((m) => m.text);
+      }
+      return { ...ticket, outcome };
     },
 
     deleteTicket: (ticketId) => {
