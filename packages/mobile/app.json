@@ -6,7 +6,10 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#161826",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
       "backgroundColor": "#161826"
     },
     "ios": {
