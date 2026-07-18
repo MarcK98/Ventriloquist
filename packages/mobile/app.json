@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Spawn",
+    "slug": "spawn-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#161826",
+    "splash": {
+      "backgroundColor": "#161826"
+    },
+    "ios": {
+      "bundleIdentifier": "ai.spawnmy.mobile",
+      "supportsTablet": false
+    }
+  }
+}

@@ -30,6 +30,7 @@
 process.env.SPAWN_SESSIONS_FILE ??= "spawn-daemon-sessions.json";
 
 const { createServer } = await import("node:http");
+const { startRelayClient } = await import("./relay-client.js");
 const { randomBytes, timingSafeEqual } = await import("node:crypto");
 const { writeFileSync, readFileSync, unlinkSync } = await import("node:fs");
 const { WebSocketServer } = await import("ws");
@@ -62,6 +63,11 @@ const tokenOk = (req) => {
 };
 
 const daemon = createDaemon();
+
+// Optional mobile path: dial out to a Spawn relay (packages/relay) so phones
+// can reach this daemon without opening any local port. No-op unless
+// SPAWN_RELAY_URL + SPAWN_RELAY_DAEMON_KEY are set.
+const relay = startRelayClient(daemon);
 
 // Methods a client may call = every public daemon function except the emitter.
 const METHODS = new Set(
@@ -156,6 +162,7 @@ const shutdown = () => {
     }
   }
   daemon._approvalHub?.close();
+  relay?.close();
   wss.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();

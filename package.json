@@ -5,7 +5,9 @@
   "type": "module",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/core",
+    "packages/desktop",
+    "packages/relay"
   ],
   "scripts": {
     "start": "node src/index.js",

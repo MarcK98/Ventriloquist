@@ -1,0 +1,17 @@
+{
+  "name": "@spawn/relay",
+  "version": "0.1.0",
+  "description": "Spawn relay — bridges phones to the local Spawn daemon. The daemon dials OUT to this hub; mobile clients authenticate in. Runs locally in dev, deploys to any Node host (Fly/Railway) unchanged.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "jose": "^5.9.6"
+  }
+}
