@@ -3,6 +3,8 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+.vps-control.env
+!.vps-control.env.example
 *.pem
 *.pub
 tfplan*

@@ -60,6 +60,44 @@ password. `vps-stop.sh` removes that temporary rule and stops the instance —
 **not** `terraform destroy`, so the disk (and anything you installed/saved)
 is exactly as you left it next time.
 
+### Letting others turn it on/off (no AWS credentials)
+
+`vps-start.sh`/`vps-stop.sh` above need AWS credentials (they call the AWS CLI
+with the `claude-spawn` profile). To let **anyone with the repo** flip the VPS
+on/off *without* handing out AWS access, there's a control endpoint —
+`vpsctl.sh`:
+
+```sh
+cd terraform
+cp .vps-control.env.example .vps-control.env   # paste the URL + token Marc gives you
+./vpsctl.sh on        # start it; opens RDP to YOUR current IP; prints the IP
+./vpsctl.sh status    # is it on? what's the IP?
+./vpsctl.sh off       # stop it (closes RDP)
+```
+
+That's the whole thing — no AWS CLI, no profile, no keys. The **Windows
+password is not handled here** (power-only by design): get it from Marc, who
+shares it with whoever he wants.
+
+How it stays safe:
+- The endpoint is an AWS Lambda (behind API Gateway) whose **IAM role** holds
+  the AWS access — there are no AWS keys anywhere in the repo or on any user's
+  machine. That role can do exactly three things: start/stop *the instance
+  tagged `spawn-windows-vps`*, and open/close RDP on *that one security group*.
+  Nothing else in the account is reachable.
+- Callers authenticate with a **shared bearer token** (in `.vps-control.env`,
+  gitignored) that Marc hands out. It's narrow (only on/off/status of one box)
+  and **revocable** — to rotate it, change `vps_control_token` in
+  `terraform.tfvars` and `terraform apply`; old token stops working
+  immediately. It is not, and cannot stand in for, Marc's AWS credentials.
+- `on` opens RDP scoped to the **caller's** current IP only (the endpoint sees
+  it); `off` closes RDP for everyone and stops the box.
+
+(Aside: the first cut used a Lambda Function URL, but this account's AWS
+Organization SCPs block public auth-NONE Function URLs — so it's fronted by an
+API Gateway HTTP API instead, which the org allows. Same Lambda, same token
+auth.)
+
 ### Going idle for a long time (optional — get the VPS to ~$0)
 
 `vps-stop.sh` stops the box but its 30GB disk keeps billing (~$2.40/month)
