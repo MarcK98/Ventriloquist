@@ -1,0 +1,12 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.pem
+*.pub
+tfplan*
+.build/
+.vps-last-ip
+crash.log
+crash.*.log

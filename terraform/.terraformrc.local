@@ -1,0 +1,11 @@
+// Repo-local Terraform CLI config: filesystem-mirror ONLY, no registry
+// fallback. This sandbox's network cannot reach registry.terraform.io
+// (blocked at the CDN level), so any config that references it — even as a
+// fallback — makes `terraform init` try service discovery and fail. Use
+// via:  TF_CLI_CONFIG_FILE="$PWD/.terraformrc.local" terraform init
+// Does not touch the machine's global ~/.terraformrc.
+provider_installation {
+  filesystem_mirror {
+    path = "/Users/mkhoury/.terraform.d/plugins"
+  }
+}
