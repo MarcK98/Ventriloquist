@@ -149,7 +149,11 @@ export const addMessage = ({ threadId, role, text = "", toolName = null, toolInp
 };
 export const getMessage = (id) =>
   openDb().prepare(`SELECT * FROM messages WHERE id = ?`).get(id);
-export const listMessages = (threadId, { limit = 200, before = null } = {}) => {
+export const listMessages = (threadId, opts) => {
+  // `opts ?? {}` (not a `= {}` param default) — the desktop's RPC layer
+  // JSON-stringifies args, which turns an omitted `undefined` opts into
+  // `null`, and destructuring `null` throws. This tolerates both.
+  const { limit = 200, before = null } = opts ?? {};
   const d = openDb();
   const rows = before
     ? d.prepare(`SELECT * FROM messages WHERE thread_id = ? AND id < ? ORDER BY id DESC LIMIT ?`).all(threadId, before, limit)
@@ -200,7 +204,8 @@ export const updateTicket = (id, fields) => {
 };
 // Archive-inclusive search (the team lead's board tool): LIKE over
 // title+body, optional status/project filters, done tickets included.
-export const searchTickets = ({ query = "", status = null, projectId = null, limit = 20 } = {}) => {
+export const searchTickets = (opts) => {
+  const { query = "", status = null, projectId = null, limit = 20 } = opts ?? {};
   const d = openDb();
   const clauses = [];
   const args = [];

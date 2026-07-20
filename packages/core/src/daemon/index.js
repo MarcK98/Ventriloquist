@@ -510,7 +510,8 @@ export function createDaemon() {
 
     // Archive search for the team lead's board tool — done tickets included.
     // `project` is a name (how the lead sees them); resolved to an id here.
-    searchTickets: ({ query, status, project, limit } = {}) => {
+    searchTickets: (opts) => {
+      const { query, status, project, limit } = opts ?? {};
       const projectId = project
         ? (db.listProjects().find((p) => p.name === project)?.id ?? -1)
         : null;
@@ -541,7 +542,8 @@ export function createDaemon() {
 
     // Launch a run for an existing (backlog) ticket: creates its thread,
     // links it, moves it to in-progress (via launchTurn's board flow).
-    delegateTicket: (ticketId, { model, effort } = {}) => {
+    delegateTicket: (ticketId, opts) => {
+      const { model, effort } = opts ?? {};
       const ticket = db.getTicket(ticketId);
       if (!ticket) throw new Error(`No such ticket: ${ticketId}`);
       if (ticket.thread_id) throw new Error(`Ticket ${ticketId} already has a thread`);
@@ -772,7 +774,8 @@ export function createDaemon() {
     // Usage rollup for the Usage view, from the append-only ledger. `days`
     // bounds the window (1 = today-ish: last 24h). Everything here is
     // aggregation over readUsageEvents — no new state.
-    getUsage: (days = 1) => {
+    getUsage: (rawDays) => {
+      const days = rawDays ?? 1; // RPC/JSON turns an omitted arg into null, not undefined
       const cutoff = Date.now() - days * 86_400_000;
       const events = readUsageEvents().filter((r) => (r.ts ?? 0) >= cutoff);
       const tok = (r) =>
