@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import WebSocket from "ws";
-import { dataPath } from "@spawn/core/config";
+import { dataPath, daemonBuildSig } from "@spawn/core/config";
 
 // Client for the Spawn daemon (a separate background process). The desktop
 // app NEVER touches sessions or SQLite directly — everything goes through
@@ -39,17 +39,45 @@ const nodeBin = () => {
   return "node";
 };
 
-const health = async () => {
+// The source fingerprint of the daemon code THIS app ships (see config.js).
+const BUILD = daemonBuildSig();
+
+// Probe /health once. Returns whether a daemon is up, and — since it's a
+// detached process that outlives the app — whether it's running our build. A
+// daemon started before a code change keeps serving stale RPC methods, so a
+// build mismatch means "must restart", not "healthy".
+const probe = async () => {
   try {
     const res = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(800) });
-    return (await res.json()).ok === true;
+    const body = await res.json();
+    if (body.ok !== true) return { up: false };
+    return { up: true, pid: body.pid, stale: !!body.build && !!BUILD && body.build !== BUILD };
   } catch {
-    return false;
+    return { up: false };
+  }
+};
+
+// Ask a running daemon to exit and wait for it to stop answering. Best-effort:
+// if the pid is unknown or the signal fails we just fall through to spawn (the
+// new daemon exits cleanly on EADDRINUSE if the old one is somehow still bound).
+const stopDaemon = async (pid) => {
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    return; // already gone / not ours
+  }
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    if (!(await probe()).up) return;
   }
 };
 
 export async function ensureDaemon() {
-  if (await health()) return { started: false };
+  const cur = await probe();
+  if (cur.up && !cur.stale) return { started: false };
+  // A live daemon running older code would 400 on newer RPC methods — replace it.
+  if (cur.up && cur.stale) await stopDaemon(cur.pid);
   // A detached daemon has no console — append its stdout+stderr to a log file
   // so crashes/warnings are diagnosable. (`npm run daemon` still logs to the
   // console; this path only runs when the desktop app spawns the daemon.)
@@ -63,7 +91,10 @@ export async function ensureDaemon() {
   closeSync(logFd); // the child holds its own copy
   for (let i = 0; i < 25; i++) {
     await new Promise((r) => setTimeout(r, 200));
-    if (await health()) return { started: true, pid: child.pid };
+    const p = await probe();
+    // Require our build so a stale daemon that ignored SIGTERM (and is still
+    // holding the port) is never mistaken for the fresh one we just spawned.
+    if (p.up && !p.stale) return { started: true, pid: child.pid, replaced: cur.stale };
   }
   throw new Error("Spawn daemon did not come up on " + BASE);
 }

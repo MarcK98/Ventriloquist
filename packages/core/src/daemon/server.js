@@ -35,13 +35,16 @@ const { randomBytes, timingSafeEqual } = await import("node:crypto");
 const { writeFileSync, readFileSync, unlinkSync } = await import("node:fs");
 const { WebSocketServer } = await import("ws");
 const { createDaemon } = await import("./index.js");
-const { dataPath } = await import("../config.js");
+const { dataPath, daemonBuildSig } = await import("../config.js");
 const { log } = await import("../logger.js");
 
 // 8810/8811 — clear of the bridge's ports (approvals 8790, dashboard 8791,
 // Trello webhook 8792), which the Phase-1 defaults collided with.
 const PORT = Number(process.env.SPAWN_DAEMON_PORT) || 8810;
 const VERSION = "0.1.0";
+// Fingerprint of the source this daemon is running; the client restarts us if
+// its own source (post-upgrade) fingerprints differently. Computed once at boot.
+const BUILD = daemonBuildSig();
 
 // Per-start shared secret. 0600 so only this user can read it; the desktop
 // client reads the file and sends it back as a header. Written only AFTER a
@@ -95,7 +98,7 @@ const server = createServer(async (req, res) => {
   try {
     if (!hostOk(req)) return json(403, { ok: false, error: "forbidden host" });
     if (req.method === "GET" && req.url === "/health") {
-      return json(200, { ok: true, pid: process.pid, version: VERSION });
+      return json(200, { ok: true, pid: process.pid, version: VERSION, build: BUILD });
     }
     if (req.method === "POST" && req.url === "/rpc") {
       if (!tokenOk(req)) return json(401, { ok: false, error: "missing or bad token" });

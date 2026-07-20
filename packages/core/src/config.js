@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import dotenv from "dotenv";
@@ -11,6 +13,36 @@ export const dataDir = process.env.SPAWN_DATA_DIR || ROOT_DIR;
 export const dataPath = (name) => join(dataDir, name);
 
 dotenv.config({ path: join(dataDir, ".env") });
+
+// A content fingerprint of the daemon's own source tree (all .js under
+// packages/core/src). The daemon reports it on /health; the desktop client
+// computes the same value from the code it's about to run and restarts a
+// running daemon whose fingerprint differs. Without this, a detached daemon
+// started before a code change keeps serving stale RPC methods (e.g. it 400s
+// with "unknown method: getTicket" for a method added after it launched).
+const SRC_DIR = fileURLToPath(new URL(".", import.meta.url)); // packages/core/src/
+export const daemonBuildSig = () => {
+  const files = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir).sort()) {
+      if (name === "node_modules") continue;
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (name.endsWith(".js")) files.push(p);
+    }
+  };
+  try {
+    walk(SRC_DIR);
+    const h = createHash("sha1");
+    for (const p of files) {
+      h.update(p.slice(SRC_DIR.length)); // path, so renames/moves count
+      h.update(readFileSync(p));
+    }
+    return h.digest("hex").slice(0, 12);
+  } catch {
+    return ""; // unreadable tree: skip the check rather than block startup
+  }
+};
 
 const bool = (v, def = false) => {
   if (v === undefined || v === "") return def;
