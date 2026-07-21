@@ -1,93 +1,48 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
   KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
-import { RelayClient, SpawnEvent } from "./api";
+import { RelayClient } from "./api";
 import { C } from "./theme";
+import { useCachedRpc, useSpawnEvents } from "./hooks";
+import { Btn, Card, Center, Chip, Dot, ErrorBar, Field, S, fmtTok, tapHaptic } from "./ui";
 
 const MODELS = ["haiku", "sonnet", "opus", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
-// The four phone surfaces: Board, Approvals, Runs, Thread. Deliberately
-// lean — RN core components only, Nocturne colors, same daemon payloads as
-// the desktop.
+export { ThreadScreen } from "./thread";
+export { Dot, Center } from "./ui";
 
-const fmtTok = (n: number) =>
-  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+// The phone surfaces: Board, Map, Runs, Approvals, Usage, Settings. Every
+// list hydrates from the SQLite cache first (instant cold start, readable
+// offline) and reconciles when the relay is ready.
 
-const S = {
-  card: {
-    backgroundColor: C.surface,
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-  },
-  title: { color: C.text, fontSize: 14, fontWeight: "500" as const },
-  dim: { color: C.n500, fontSize: 12 },
-  tag: {
-    color: C.accent300,
-    fontSize: 11,
-    borderColor: C.accent,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    overflow: "hidden" as const,
-  },
-};
-
-function useSpawnEvents(client: RelayClient, types: string[], cb: (ev: SpawnEvent) => void) {
-  const cbRef = useRef(cb);
-  cbRef.current = cb;
-  useEffect(
-    () => client.onEvent((ev) => {
-      if (types.includes(ev.type)) cbRef.current(ev);
-    }),
-    [client] // eslint-disable-line react-hooks/exhaustive-deps
-  );
-}
-
-// ── Shared bits: chips, pickers, sheet ─────────────────────────────────────────
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function useRefreshControl(refresh: () => void) {
+  const [refreshing, setRefreshing] = useState(false);
   return (
-    <View style={{ gap: 5 }}>
-      <Text style={{ color: C.n500, fontSize: 11 }}>{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Chip({ label, on, onPress, dim }: { label: string; on: boolean; onPress: () => void; dim?: boolean }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        borderWidth: 1,
-        borderColor: on ? C.accent : C.n800,
-        backgroundColor: on ? C.accent800 : "transparent",
-        borderRadius: 7,
-        paddingHorizontal: 11,
-        paddingVertical: 5,
-        opacity: dim ? 0.4 : 1,
+    <RefreshControl
+      refreshing={refreshing}
+      tintColor={C.n500}
+      onRefresh={() => {
+        setRefreshing(true);
+        refresh();
+        setTimeout(() => setRefreshing(false), 600);
       }}
-    >
-      <Text style={{ color: on ? C.accent200 : C.n400, fontSize: 12 }}>{label}</Text>
-    </Pressable>
+    />
   );
 }
 
-// Single-select chip row where "" means auto. `allowed` dims disallowed models.
+// ── Shared bits: pickers, sheet ────────────────────────────────────────────────
 function ChipPicker({
   options,
   value,
@@ -148,9 +103,11 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: "#000a", justifyContent: "flex-end" }}
+        style={{ flex: 1, justifyContent: "flex-end" }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        {/* Tap outside to dismiss. */}
+        <Pressable style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "#000a" }} onPress={onClose} />
         <View
           style={{
             backgroundColor: C.bg,
@@ -171,7 +128,7 @@ function Sheet({ title, onClose, children }: { title: string; onClose: () => voi
             }}
           >
             <Text style={{ color: C.text, fontSize: 16, fontWeight: "600", flex: 1 }}>{title}</Text>
-            <Pressable onPress={onClose} hitSlop={12}>
+            <Pressable onPress={onClose} hitSlop={12} style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
               <Text style={{ color: C.n500, fontSize: 20 }}>✕</Text>
             </Pressable>
           </View>
@@ -284,15 +241,16 @@ function TicketSheet({
       )}
       {error !== "" && <Text style={{ color: C.err, fontSize: 12 }}>⚠ {error}</Text>}
       <View style={{ flexDirection: "row", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-        {editing && <Btn label="Delete" color={C.err} onPress={doDelete} disabled={busy !== ""} />}
+        {editing && <Btn label="Delete" color={C.err} onPress={doDelete} disabled={busy !== ""} busy={busy === "delete"} />}
         <View style={{ flex: 1 }} />
-        <Btn label={editing ? "Save" : "Create"} color={C.n400} onPress={doSave} disabled={!title.trim() || projectId === "" || busy !== ""} />
+        <Btn label="Save" color={C.n400} onPress={doSave} disabled={!title.trim() || projectId === "" || busy !== ""} busy={busy === "save"} />
         {canDelegate && (
           <Btn
-            label={busy === "delegate" ? "Delegating…" : editing ? "Delegate" : "Create & delegate"}
+            label={editing ? "Delegate" : "Create & delegate"}
             color={C.accent}
             onPress={doDelegate}
             disabled={!title.trim() || projectId === "" || busy !== ""}
+            busy={busy === "delegate"}
           />
         )}
       </View>
@@ -361,7 +319,7 @@ function DelegateSheet({
       {error !== "" && <Text style={{ color: C.err, fontSize: 12 }}>⚠ {error}</Text>}
       <View style={{ flexDirection: "row", marginTop: 4 }}>
         <View style={{ flex: 1 }} />
-        <Btn label={busy ? "Delegating…" : "Delegate"} color={C.accent} onPress={send} disabled={!task.trim() || projectId === "" || busy} />
+        <Btn label="Delegate" color={C.accent} onPress={send} disabled={!task.trim() || projectId === "" || busy} busy={busy} />
       </View>
     </Sheet>
   );
@@ -379,23 +337,13 @@ export function BoardScreen({
   projects: any[];
   openThread: (threadId: number, title: string) => void;
 }) {
-  const [tickets, setTickets] = useState<any[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const { data: tickets, error, refresh } = useCachedRpc<any[]>(client, "tickets", "listTickets");
   const [sheet, setSheet] = useState<null | { kind: "ticket"; ticket: any | null } | { kind: "delegate" }>(null);
-
-  const refresh = useCallback(() => {
-    client
-      .rpc<any[]>("listTickets")
-      .then((t) => {
-        setTickets(t);
-        setLoaded(true);
-      })
-      .catch(() => {});
-  }, [client]);
-  useEffect(refresh, [refresh]);
   useSpawnEvents(client, ["ticket:created", "ticket:updated", "ticket:deleted", "turn:start", "turn:done"], refresh);
+  const refreshControl = useRefreshControl(refresh);
 
-  if (!loaded) return <Center spinner />;
+  if (tickets == null && error) return <ErrorBar message={error} onRetry={refresh} />;
+  if (tickets == null) return <Center spinner />;
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>
@@ -403,7 +351,7 @@ export function BoardScreen({
         <View style={{ flex: 1 }} />
         <Btn label="+ Ticket" color={C.n400} onPress={() => setSheet({ kind: "ticket", ticket: null })} />
       </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 40 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 40 }} refreshControl={refreshControl}>
         {COLUMNS.map((col) => {
           const rows = tickets.filter((t) => t.status === col);
           if (!rows.length) return null;
@@ -421,9 +369,8 @@ export function BoardScreen({
                 {col.replace("-", " ")} · {rows.length}
               </Text>
               {rows.map((t) => (
-                <Pressable
+                <Card
                   key={t.id}
-                  style={S.card}
                   onPress={() =>
                     t.thread_id != null ? openThread(t.thread_id, t.title) : setSheet({ kind: "ticket", ticket: t })
                   }
@@ -446,7 +393,7 @@ export function BoardScreen({
                       <Text style={[S.dim, { color: C.ok, marginLeft: "auto" }]}>running…</Text>
                     )}
                   </View>
-                </Pressable>
+                </Card>
               ))}
             </View>
           );
@@ -483,20 +430,31 @@ export function BoardScreen({
 
 // ── Approvals ────────────────────────────────────────────────────────────────
 export function ApprovalsScreen({ client }: { client: RelayClient }) {
-  const [pending, setPending] = useState<any[]>([]);
-  const refresh = useCallback(() => {
-    client.rpc<any[]>("listApprovals").then(setPending).catch(() => {});
-  }, [client]);
-  useEffect(refresh, [refresh]);
+  const { data: pending, error, refresh } = useCachedRpc<any[]>(client, "approvals", "listApprovals");
+  const [answering, setAnswering] = useState<number | null>(null);
+  const [answerError, setAnswerError] = useState("");
   useSpawnEvents(client, ["approval:request", "approval:resolved"], refresh);
+  const refreshControl = useRefreshControl(refresh);
 
   const answer = async (id: number, allow: boolean) => {
-    await client.rpc("resolveApproval", id, allow);
-    refresh();
+    if (answering != null) return;
+    setAnswering(id);
+    setAnswerError("");
+    try {
+      await client.rpc("resolveApproval", id, allow);
+    } catch (e) {
+      setAnswerError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnswering(null);
+      refresh();
+    }
   };
 
+  if (pending == null && error) return <ErrorBar message={error} onRetry={refresh} />;
+  if (pending == null) return <Center spinner />;
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14 }} refreshControl={refreshControl}>
+      {answerError !== "" && <Text style={{ color: C.err, fontSize: 12, marginBottom: 8 }}>⚠ {answerError}</Text>}
       {pending.map((a) => (
         <View key={a.id} style={[S.card, { borderColor: C.warn, borderWidth: 1 }]}>
           <Text style={S.title}>✋ {a.tool}</Text>
@@ -504,8 +462,8 @@ export function ApprovalsScreen({ client }: { client: RelayClient }) {
             {JSON.stringify(a.input, null, 2)}
           </Text>
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
-            <Btn label="Allow" color={C.ok} onPress={() => answer(a.id, true)} />
-            <Btn label="Deny" color={C.err} onPress={() => answer(a.id, false)} />
+            <Btn label="Allow" color={C.ok} onPress={() => answer(a.id, true)} disabled={answering != null} busy={answering === a.id} />
+            <Btn label="Deny" color={C.err} onPress={() => answer(a.id, false)} disabled={answering != null} />
           </View>
         </View>
       ))}
@@ -515,6 +473,34 @@ export function ApprovalsScreen({ client }: { client: RelayClient }) {
 }
 
 // ── Runs ─────────────────────────────────────────────────────────────────────
+const RunRow = React.memo(function RunRow({
+  t,
+  liveTokens,
+  openThread,
+}: {
+  t: any;
+  liveTokens: number | null;
+  openThread: (threadId: number, title: string) => void;
+}) {
+  return (
+    <Card onPress={() => openThread(t.id, t.title)}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
+        <Dot color={t.running ? C.ok : C.n600} />
+        <Text style={[S.title, { flex: 1 }]} numberOfLines={1}>
+          {t.title}
+        </Text>
+        {t.running && liveTokens != null && liveTokens > 0 && (
+          <Text style={{ color: C.ok, fontSize: 12 }}>⚡ {fmtTok(liveTokens)}</Text>
+        )}
+      </View>
+      <Text style={[S.dim, { marginTop: 4 }]}>
+        {t.project_name} · {t.kind}
+        {t.branch ? ` · ${String(t.branch).replace(/^ticket\//, "")}` : ""}
+      </Text>
+    </Card>
+  );
+});
+
 export function RunsScreen({
   client,
   openThread,
@@ -522,13 +508,8 @@ export function RunsScreen({
   client: RelayClient;
   openThread: (threadId: number, title: string) => void;
 }) {
-  const [runs, setRuns] = useState<any[]>([]);
+  const { data: runs, error, refresh } = useCachedRpc<any[]>(client, "runs", "listActiveThreads");
   const [live, setLive] = useState<Map<number, number>>(new Map());
-
-  const refresh = useCallback(() => {
-    client.rpc<any[]>("listActiveThreads").then(setRuns).catch(() => {});
-  }, [client]);
-  useEffect(refresh, [refresh]);
   useSpawnEvents(client, ["thread:created", "thread:updated", "turn:start", "turn:done"], refresh);
   useSpawnEvents(client, ["turn:usage"], (ev) =>
     setLive((prev) => new Map(prev).set(ev.payload.threadId, ev.payload.liveTokens))
@@ -540,177 +521,17 @@ export function RunsScreen({
       return next;
     })
   );
+  const refreshControl = useRefreshControl(refresh);
 
+  if (runs == null && error) return <ErrorBar message={error} onRetry={refresh} />;
+  if (runs == null) return <Center spinner />;
   return (
-    <FlatList
-      style={{ flex: 1 }}
-      contentContainerStyle={{ padding: 14 }}
-      data={runs}
-      keyExtractor={(t) => String(t.id)}
-      ListEmptyComponent={<Center text="Nothing active." />}
-      renderItem={({ item: t }) => {
-        const lt = live.get(t.id) ?? t.liveTokens;
-        return (
-          <Pressable style={S.card} onPress={() => openThread(t.id, t.title)}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
-              <Dot color={t.running ? C.ok : C.n600} />
-              <Text style={[S.title, { flex: 1 }]} numberOfLines={1}>
-                {t.title}
-              </Text>
-              {t.running && lt != null && lt > 0 && (
-                <Text style={{ color: C.ok, fontSize: 12 }}>⚡ {fmtTok(lt)}</Text>
-              )}
-            </View>
-            <Text style={[S.dim, { marginTop: 4 }]}>
-              {t.project_name} · {t.kind}
-              {t.branch ? ` · ${String(t.branch).replace(/^ticket\//, "")}` : ""}
-            </Text>
-          </Pressable>
-        );
-      }}
-    />
-  );
-}
-
-// ── Thread ───────────────────────────────────────────────────────────────────
-export function ThreadScreen({
-  client,
-  threadId,
-  onBack,
-  title,
-}: {
-  client: RelayClient;
-  threadId: number;
-  title: string;
-  onBack: () => void;
-}) {
-  const [messages, setMessages] = useState<any[]>([]);
-  const [liveText, setLiveText] = useState("");
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Messages waiting behind the running turn (queued while the agent is busy).
-  // Daemon-owned depth: turn:queued carries it, turn:done the remainder.
-  const [queued, setQueued] = useState(0);
-  const listRef = useRef<ScrollView>(null);
-
-  useEffect(() => {
-    client.rpc<any[]>("listMessages", threadId).then(setMessages).catch(() => {});
-  }, [client, threadId]);
-  useSpawnEvents(client, ["turn:start", "turn:delta", "turn:text", "turn:tool", "turn:queued", "turn:done"], (ev) => {
-    if (ev.payload.threadId !== threadId) return;
-    if (ev.type === "turn:start") setBusy(true);
-    else if (ev.type === "turn:delta") setLiveText((p) => p + ev.payload.text);
-    else if (ev.type === "turn:queued") setQueued(ev.payload.depth);
-    else if (ev.type === "turn:done") {
-      setLiveText("");
-      setBusy(false);
-      setQueued(ev.payload.queued ?? 0);
-    } else {
-      if (ev.type === "turn:text") setLiveText("");
-      const msg = ev.payload.message;
-      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
-    }
-  });
-  useEffect(() => {
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
-  }, [messages, liveText]);
-
-  // While busy the daemon queues the message (fires it as its own turn when the
-  // current one ends) rather than starting a parallel run — so sending is always
-  // allowed; a busy send just bumps the queued count.
-  const send = async () => {
-    const text = draft.trim();
-    if (!text) return;
-    setDraft("");
-    if (busy) setQueued((n) => n + 1);
-    else setBusy(true);
-    await client.rpc("sendMessage", threadId, text).catch(() => {
-      if (!busy) setBusy(false);
-    });
-    setMessages(await client.rpc("listMessages", threadId).catch(() => messages));
-  };
-
-  return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          gap: 10,
-          borderBottomWidth: 1,
-          borderBottomColor: C.n800,
-        }}
-      >
-        <Pressable onPress={onBack} hitSlop={12}>
-          <Text style={{ color: C.accent, fontSize: 15 }}>‹ Back</Text>
-        </Pressable>
-        <Text style={[S.title, { flex: 1 }]} numberOfLines={1}>
-          {title}
-        </Text>
-      </View>
-      <ScrollView
-        ref={listRef}
-        style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 14 }}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-      >
-        {messages.map((m) =>
-          m.role === "tool" ? (
-            <Text key={m.id} style={[S.dim, { marginBottom: 8, fontFamily: "Menlo" }]} numberOfLines={1}>
-              ⚙ {m.tool_name}
-            </Text>
-          ) : (
-            <View key={m.id} style={{ marginBottom: 12 }}>
-              <Text style={{ color: m.role === "user" ? C.accent300 : C.ok, fontSize: 11, marginBottom: 2 }}>
-                {m.role === "user" ? "you" : "agent"}
-              </Text>
-              <Text style={{ color: m.role === "system" ? C.n500 : C.text, fontSize: 14, lineHeight: 20 }}>
-                {m.text}
-              </Text>
-            </View>
-          )
-        )}
-        {liveText !== "" && (
-          <View style={{ marginBottom: 12 }}>
-            <Text style={{ color: C.ok, fontSize: 11, marginBottom: 2 }}>agent</Text>
-            <Text style={{ color: C.text, fontSize: 14, lineHeight: 20 }}>{liveText}▌</Text>
-          </View>
-        )}
-        {busy && liveText === "" && <Text style={S.dim}>working…</Text>}
-        {queued > 0 && (
-          <Text style={{ color: C.accent, fontSize: 12, marginTop: 6, opacity: 0.85 }}>
-            {queued} queued — sends when the agent is free
-          </Text>
-        )}
-      </ScrollView>
-      <View style={{ flexDirection: "row", gap: 8, padding: 12, alignItems: "flex-end" }}>
-        <TextInput
-          style={{
-            flex: 1,
-            backgroundColor: C.surface,
-            borderRadius: 12,
-            color: C.text,
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            maxHeight: 120,
-            borderWidth: 1,
-            borderColor: C.n800,
-          }}
-          multiline
-          value={draft}
-          placeholder={busy ? "Queue a message…" : "Steer the agent…"}
-          placeholderTextColor={C.n600}
-          onChangeText={setDraft}
-        />
-        <Btn label={busy ? "Queue" : "Send"} color={C.accent} onPress={send} disabled={!draft.trim()} />
-      </View>
-    </KeyboardAvoidingView>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14 }} refreshControl={refreshControl}>
+      {runs.map((t) => (
+        <RunRow key={t.id} t={t} liveTokens={live.get(t.id) ?? t.liveTokens ?? null} openThread={openThread} />
+      ))}
+      {runs.length === 0 && <Center text="Nothing active." />}
+    </ScrollView>
   );
 }
 
@@ -738,25 +559,23 @@ export function MapScreen({
   client: RelayClient;
   openThread: (threadId: number, title: string) => void;
 }) {
-  const [map, setMap] = useState<any>(null);
-  const refresh = useCallback(() => {
-    client.rpc<any>("getMap").then(setMap).catch(() => {});
-  }, [client]);
+  const { data: map, error, refresh } = useCachedRpc<any>(client, "map", "getMap");
   useEffect(() => {
-    refresh();
     const t = setInterval(refresh, 20_000);
     return () => clearInterval(t);
   }, [refresh]);
   useSpawnEvents(client, ["thread:created", "thread:updated", "turn:start", "turn:done"], refresh);
+  const refreshControl = useRefreshControl(refresh);
 
-  if (!map) return <Center spinner />;
+  if (map == null && error) return <ErrorBar message={error} onRetry={refresh} />;
+  if (map == null) return <Center spinner />;
   const projects: any[] = map.projects ?? [];
   const threads: any[] = map.threads ?? [];
   const liveTotal = threads.filter((t) => t.running).length;
   const leadName = projects.find((p) => p.id === map.teamLeadProjectId)?.name;
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 40 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 40 }} refreshControl={refreshControl}>
       {leadName && (
         <View style={[S.card, { flexDirection: "row", alignItems: "center", gap: 8, borderColor: C.accent700, borderWidth: 1 }]}>
           <Text style={{ fontSize: 15 }}>🧭</Text>
@@ -777,7 +596,7 @@ export function MapScreen({
               {live > 0 && <Text style={{ color: C.ok, fontSize: 11 }}>● {live}</Text>}
             </View>
             {rows.map((t) => (
-              <Pressable key={t.id} style={S.card} onPress={() => openThread(t.id, t.title)}>
+              <Card key={t.id} onPress={() => openThread(t.id, t.title)}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>
                   <Dot color={t.running ? C.ok : C.n600} />
                   <Text style={[S.title, { flex: 1 }]} numberOfLines={1}>
@@ -794,7 +613,7 @@ export function MapScreen({
                   {t.dirty != null && t.dirty > 0 && <Text style={[S.dim, { color: C.warn }]}>±{t.dirty}</Text>}
                   {t.turns > 0 && <Text style={S.dim}>${Number(t.costUsd ?? 0).toFixed(2)}</Text>}
                   {t.pr ? (
-                    <Pressable onPress={() => t.pr.url && Linking.openURL(t.pr.url)}>
+                    <Pressable onPress={() => t.pr.url && Linking.openURL(t.pr.url)} style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
                       <Text style={{ color: t.pr.state === "OPEN" ? C.ok : t.pr.state === "MERGED" ? C.n400 : C.err, fontSize: 12 }}>
                         ⑂ #{t.pr.number} {String(t.pr.state).toLowerCase()}
                         {t.pr.checks ? ` · ${t.pr.checks}` : ""}
@@ -805,7 +624,7 @@ export function MapScreen({
                   )}
                   {t.running && t.pid && <Text style={[S.dim, { color: C.ok, marginLeft: "auto" }]}>pid {t.pid}</Text>}
                 </View>
-              </Pressable>
+              </Card>
             ))}
           </View>
         );
@@ -824,12 +643,9 @@ const RANGES: { label: string; days: number }[] = [
 
 export function UsageScreen({ client }: { client: RelayClient }) {
   const [days, setDays] = useState(1);
-  const [u, setU] = useState<any>(null);
-  const refresh = useCallback(() => {
-    client.rpc<any>("getUsage", days).then(setU).catch(() => {});
-  }, [client, days]);
-  useEffect(refresh, [refresh]);
+  const { data: u, error, refresh } = useCachedRpc<any>(client, `usage:${days}`, "getUsage", days);
   useSpawnEvents(client, ["turn:done"], refresh);
+  const refreshControl = useRefreshControl(refresh);
 
   const maxSeries = u ? Math.max(...u.series.map((s: any) => s.tokens), 1) : 1;
   const maxProject = u ? Math.max(...u.byProject.map((p: any) => p.tokens), 1) : 1;
@@ -848,13 +664,14 @@ export function UsageScreen({ client }: { client: RelayClient }) {
           <Chip key={r.days} label={r.label} on={days === r.days} onPress={() => setDays(r.days)} />
         ))}
       </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingTop: 6, paddingBottom: 40, gap: 14 }}>
+      {u == null && error !== "" && <ErrorBar message={error} onRetry={refresh} />}
+      {u == null && error === "" && <Center spinner />}
+      {u != null && (
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingTop: 6, paddingBottom: 40, gap: 14 }} refreshControl={refreshControl}>
         <View style={S.card}>
-          <Text style={{ color: C.text, fontSize: 26, fontWeight: "600" }}>{u ? fmtTok(u.totalTokens) : "—"}</Text>
-          <Text style={S.dim}>
-            {u ? `tokens · ${u.turns} turns · ${u.threads} threads · $${u.totalCost.toFixed(2)}` : ""}
-          </Text>
-          {u && u.series.length > 0 && (
+          <Text style={{ color: C.text, fontSize: 26, fontWeight: "600" }}>{fmtTok(u.totalTokens)}</Text>
+          <Text style={S.dim}>{`tokens · ${u.turns} turns · ${u.threads} threads · $${u.totalCost.toFixed(2)}`}</Text>
+          {u.series.length > 0 && (
             <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 2, height: 70, marginTop: 12 }}>
               {u.series.map((pt: any, i: number) => (
                 <View
@@ -873,7 +690,7 @@ export function UsageScreen({ client }: { client: RelayClient }) {
 
         <View style={S.card}>
           <Text style={[S.title, { marginBottom: 10 }]}>By model</Text>
-          {(u?.byModel ?? []).map((m: any) => (
+          {(u.byModel ?? []).map((m: any) => (
             <View key={m.model} style={{ marginBottom: 9 }}>
               <View style={{ flexDirection: "row", marginBottom: 3 }}>
                 <Text style={[S.dim, { flex: 1, color: C.text }]}>{m.model}</Text>
@@ -884,12 +701,12 @@ export function UsageScreen({ client }: { client: RelayClient }) {
               {bar(m.tokens / totalModel)}
             </View>
           ))}
-          {(!u || u.byModel.length === 0) && <Text style={S.dim}>No runs yet.</Text>}
+          {u.byModel.length === 0 && <Text style={S.dim}>No runs yet.</Text>}
         </View>
 
         <View style={S.card}>
           <Text style={[S.title, { marginBottom: 10 }]}>By project</Text>
-          {(u?.byProject ?? []).map((p: any) => (
+          {(u.byProject ?? []).map((p: any) => (
             <View key={p.project} style={{ marginBottom: 9 }}>
               <View style={{ flexDirection: "row", marginBottom: 3 }}>
                 <Text style={[S.dim, { flex: 1, color: C.text }]} numberOfLines={1}>
@@ -902,12 +719,12 @@ export function UsageScreen({ client }: { client: RelayClient }) {
               {bar(p.tokens / maxProject)}
             </View>
           ))}
-          {(!u || u.byProject.length === 0) && <Text style={S.dim}>Nothing in this window.</Text>}
+          {u.byProject.length === 0 && <Text style={S.dim}>Nothing in this window.</Text>}
         </View>
 
         <View style={S.card}>
           <Text style={[S.title, { marginBottom: 10 }]}>Live sessions</Text>
-          {(u?.sessions ?? []).map((s: any) => (
+          {(u.sessions ?? []).map((s: any) => (
             <View key={s.threadId} style={{ marginBottom: 11 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                 {s.running && <Dot color={C.ok} />}
@@ -918,16 +735,24 @@ export function UsageScreen({ client }: { client: RelayClient }) {
                   {s.contextTokens != null ? `${fmtTok(s.contextTokens)} ctx` : "no ctx"}
                   {s.model ? ` · ${s.model}` : ""}
                 </Text>
-                <Pressable onPress={() => client.rpc("resetThreadSession", s.threadId).then(refresh).catch(() => {})} hitSlop={8}>
+                <Pressable
+                  onPress={() => {
+                    tapHaptic();
+                    client.rpc("resetThreadSession", s.threadId).then(refresh).catch(() => {});
+                  }}
+                  hitSlop={8}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                >
                   <Text style={{ color: C.accent300, fontSize: 14 }}>↺</Text>
                 </Pressable>
               </View>
               {s.contextTokens != null && <View style={{ marginTop: 4 }}>{bar(s.contextTokens / 200_000, C.accent500)}</View>}
             </View>
           ))}
-          {(!u || u.sessions.length === 0) && <Text style={S.dim}>No live sessions.</Text>}
+          {u.sessions.length === 0 && <Text style={S.dim}>No live sessions.</Text>}
         </View>
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -939,7 +764,14 @@ export function SettingsScreen({ client, projects }: { client: RelayClient; proj
   const [skills, setSkills] = useState<any[]>([]);
   const [rules, setRules] = useState("");
   const [memory, setMemory] = useState("");
-  const [saved, setSaved] = useState(0);
+  const [saved, setSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Projects can arrive after mount (they load over the relay) — pick the
+  // first one as soon as they do.
+  useEffect(() => {
+    if (pid == null && projects.length > 0) setPid(projects[0].id);
+  }, [projects, pid]);
 
   useEffect(() => {
     if (pid == null) return;
@@ -957,9 +789,12 @@ export function SettingsScreen({ client, projects }: { client: RelayClient; proj
     const next = await client.rpc<any>("updateProjectSettings", pid, p).catch(() => null);
     if (next) {
       setS(next);
-      setSaved((n) => n + 1);
+      setSaved(true);
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setSaved(false), 2000);
     }
   };
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
   const toggleModel = (m: string) => {
     if (!s) return;
     const allowed = s.allowedModels.includes(m) ? s.allowedModels.filter((x: string) => x !== m) : [...s.allowedModels, m];
@@ -989,7 +824,7 @@ export function SettingsScreen({ client, projects }: { client: RelayClient; proj
             <Chip key={p.id} label={p.name} on={pid === p.id} onPress={() => setPid(p.id)} />
           ))}
         </ScrollView>
-        {saved > 0 && <Text style={{ color: C.ok, fontSize: 11 }}>✓ saved</Text>}
+        {saved && <Text style={{ color: C.ok, fontSize: 11 }}>✓ saved</Text>}
       </View>
       {!s ? (
         <Center spinner />
@@ -1109,47 +944,5 @@ export function SettingsScreen({ client, projects }: { client: RelayClient; proj
         </ScrollView>
       )}
     </KeyboardAvoidingView>
-  );
-}
-
-// ── Bits ─────────────────────────────────────────────────────────────────────
-export function Dot({ color }: { color: string }) {
-  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />;
-}
-
-export function Btn({
-  label,
-  color,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  color: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={{
-        borderColor: color,
-        borderWidth: 1,
-        borderRadius: 8,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        opacity: disabled ? 0.4 : 1,
-      }}
-    >
-      <Text style={{ color, fontSize: 14, fontWeight: "500" }}>{label}</Text>
-    </Pressable>
-  );
-}
-
-export function Center({ text, spinner }: { text?: string; spinner?: boolean }) {
-  return (
-    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 40 }}>
-      {spinner ? <ActivityIndicator color={C.accent} /> : <Text style={S.dim}>{text}</Text>}
-    </View>
   );
 }
