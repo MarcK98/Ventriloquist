@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, clipboard, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, shell, clipboard, dialog, Notification } from "electron";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { ensureDaemon, rpc, subscribeEvents } from "./daemon-client.js";
@@ -11,7 +11,76 @@ import { ensureDaemon, rpc, subscribeEvents } from "./daemon-client.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
+// The OS notification header/app label (macOS uses the app name; Windows needs
+// an explicit AppUserModelID) — otherwise dev builds surface as "Electron".
+app.setName("Spawn");
+if (process.platform === "win32") app.setAppUserModelId("com.spawn.desktop");
+
 let win = null;
+
+// ── Native notifications ────────────────────────────────────────────────
+// The main process is the only place that (a) sees every daemon event even
+// when the window is hidden/minimized and (b) can raise + focus the window on
+// click. We fire an OS notification for the events worth interrupting for — a
+// new ticket comment (from the lead or a working agent, never your own) and an
+// approval request — but ONLY while the window isn't focused, so we never
+// duplicate what's already on screen. Toggleable from Settings (the renderer
+// pushes the pref over IPC on boot and whenever it changes).
+let notificationsEnabled = true;
+
+const AUTHOR_LABEL = { human: "you", lead: "Team lead", agent: "Agent" };
+const oneLine = (s, n = 140) => {
+  const t = String(s ?? "").replace(/\s+/g, " ").trim();
+  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+};
+
+// Raise the window (restoring/showing if needed), then tell the renderer where
+// to navigate for the thing that was clicked.
+const focusTo = (payload) => {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send("spawn:notify-click", payload);
+};
+
+const showNotification = ({ title, subtitle, body, onClick }) => {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, subtitle, body });
+  if (onClick) n.on("click", onClick);
+  n.show();
+};
+
+// Decide whether a daemon event deserves an OS notification, and fire it.
+// Best-effort and fire-and-forget: a failure here must never break the event
+// stream feeding the renderer.
+async function maybeNotify(ev) {
+  if (!notificationsEnabled || !win || win.isFocused()) return;
+  try {
+    if (ev.type === "ticket:comment") {
+      const { ticketId, comment } = ev.payload ?? {};
+      // Only surface comments from the lead/agents — not the human's own.
+      if (!comment || comment.author_kind === "human") return;
+      const ticket = await rpc("getTicket", ticketId).catch(() => null);
+      const who = AUTHOR_LABEL[comment.author_kind] ?? comment.author_kind;
+      showNotification({
+        title: `New comment · SPWN-${ticketId}`,
+        subtitle: ticket ? `${ticket.title} · ${ticket.project_name}` : undefined,
+        body: `${who}: ${oneLine(comment.body)}`,
+        onClick: () => focusTo({ kind: "ticket", ticketId }),
+      });
+    } else if (ev.type === "approval:request") {
+      const { id, tool, threadId } = ev.payload ?? {};
+      showNotification({
+        title: "Approval needed",
+        body: `${tool ?? "A tool"} wants to run`,
+        onClick: () => focusTo({ kind: "approval", id, threadId }),
+      });
+    }
+  } catch {
+    /* a notification is best-effort */
+  }
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -100,6 +169,21 @@ ipcMain.handle("spawn:listDeliverables", (_e, threadId) => rpc("listDeliverables
 ipcMain.handle("spawn:openDir", (_e, dir) => shell.openPath(dir));
 ipcMain.handle("spawn:revealFile", (_e, p) => shell.showItemInFolder(p));
 
+// Native notifications — a host capability, not daemon RPC. The renderer owns
+// the on/off preference (localStorage) and pushes it here; the test button
+// fires one immediately, bypassing the focus gate so it works with the app in
+// the foreground (also nudges macOS to ask for notification permission).
+ipcMain.handle("spawn:setNotificationsEnabled", (_e, on) => {
+  notificationsEnabled = !!on;
+});
+ipcMain.handle("spawn:testNotification", () => {
+  showNotification({
+    title: "Spawn notifications are on",
+    body: "You'll be pinged here when a comment lands on a ticket.",
+    onClick: () => focusTo({ kind: "test" }),
+  });
+});
+
 // Provider connect — local host capabilities (browser, clipboard, file picker).
 // Not daemon RPC: they touch the machine the user is sitting at.
 ipcMain.handle("spawn:openExternal", (_e, url) =>
@@ -142,7 +226,10 @@ app.whenReady().then(async () => {
   }
 
   await ensureDaemon();
-  subscribeEvents((ev) => win?.webContents.send("spawn:event", ev));
+  subscribeEvents((ev) => {
+    win?.webContents.send("spawn:event", ev);
+    maybeNotify(ev);
+  });
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

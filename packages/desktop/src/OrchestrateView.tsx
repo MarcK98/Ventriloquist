@@ -72,12 +72,18 @@ export default function OrchestrateView({
   usage,
   onOpenThread,
   markBusy,
+  focusTicketId,
+  onFocusHandled,
 }: {
   projects: Project[];
   active: ActiveThread[];
   usage: UsageSummary | null;
   onOpenThread: (projectId: number, threadId: number) => void;
   markBusy: (threadId: number) => void;
+  // When set (from an OS-notification click), pop this ticket's detail modal
+  // open, then call onFocusHandled so the same click doesn't re-fire it.
+  focusTicketId?: number | null;
+  onFocusHandled?: () => void;
 }) {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [sheet, setSheet] = useState<{ open: boolean; ticket: Ticket | null }>({ open: false, ticket: null });
@@ -95,6 +101,14 @@ export default function OrchestrateView({
     window.spawn.listTickets().then(setTickets).catch(() => {});
   }, []);
   useEffect(refresh, [refresh]);
+
+  // A notification click asked us to open a specific ticket — do it, then clear
+  // the request so it fires exactly once.
+  useEffect(() => {
+    if (focusTicketId == null) return;
+    setModalTicket(focusTicketId);
+    onFocusHandled?.();
+  }, [focusTicketId, onFocusHandled]);
   useEffect(() => {
     return window.spawn.onEvent((ev) => {
       if (

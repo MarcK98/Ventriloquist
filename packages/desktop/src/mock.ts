@@ -561,6 +561,9 @@ export function installMock() {
         : { dir: null, files: [] },
     openDir: async () => {},
     revealFile: async () => {},
+    // No native notifications in a plain browser — no-ops keep the harness happy.
+    setNotificationsEnabled: async () => {},
+    testNotification: async () => {},
     onEvent: (h) => {
       handlers.add(h as MockHandler);
       return () => handlers.delete(h as MockHandler);

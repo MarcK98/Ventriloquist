@@ -396,7 +396,20 @@ declare global {
       listDeliverables(threadId: number): Promise<{ dir: string | null; files: DeliverableFile[] }>;
       openDir(dir: string): Promise<void>;
       revealFile(path: string): Promise<void>;
+      // Native OS notifications (Electron main). The renderer owns the on/off
+      // preference and pushes it here; testNotification fires one immediately.
+      setNotificationsEnabled(on: boolean): Promise<void>;
+      testNotification(): Promise<void>;
       onEvent(fn: (ev: SpawnEvent) => void): () => void;
+      // Subscribe to OS-notification clicks so the UI can jump to what the
+      // notification was about. Optional — absent in the browser mock.
+      onNotificationClick?(fn: (c: NotifyClick) => void): () => void;
     };
   }
 }
+
+// What an OS notification points at when clicked (main → renderer).
+export type NotifyClick =
+  | { kind: "ticket"; ticketId: number }
+  | { kind: "approval"; id: number; threadId: number }
+  | { kind: "test" };

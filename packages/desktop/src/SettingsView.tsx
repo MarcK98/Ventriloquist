@@ -171,13 +171,25 @@ const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-")
 
 // Focused settings categories — the left rail's second group filters which
 // panels render, so each screen is a small honest set instead of a wall.
-type Category = "overview" | "behavior" | "integrations" | "knowledge";
+type Category = "overview" | "behavior" | "integrations" | "knowledge" | "notifications";
 const CATEGORIES: { key: Category; label: string; icon: string }[] = [
   { key: "overview", label: "Overview", icon: "ph-squares-four" },
   { key: "behavior", label: "Models & behavior", icon: "ph-sliders-horizontal" },
   { key: "integrations", label: "Integrations", icon: "ph-plugs-connected" },
   { key: "knowledge", label: "Knowledge", icon: "ph-book-open-text" },
+  // App-wide (not per-project) — the panel renders outside the project gate.
+  { key: "notifications", label: "Notifications", icon: "ph-bell" },
 ];
+
+// App-wide OS-notification preference, mirrored to the Electron main process.
+const NOTIF_KEY = "spawn.notificationsEnabled";
+const loadNotifPref = (): boolean => {
+  try {
+    return localStorage.getItem(NOTIF_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
 
 // Live connect state for one server: signing in / waiting for a token / failed.
 type ConnectState = { state: "connecting" | "waiting" | "failed"; url?: string; error?: string };
@@ -489,7 +501,9 @@ export default function SettingsView({
         </div>
 
         <div className="settings-panels">
-          {project == null || settings == null ? (
+          {category === "notifications" ? (
+            <NotificationsPanel />
+          ) : project == null || settings == null ? (
             <div className="full empty" style={{ margin: "40px auto" }}>
               {project == null ? "Pick a project." : "Loading…"}
             </div>
@@ -857,6 +871,66 @@ export default function SettingsView({
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App-wide notifications (not per-project) ───────────────────────────────────
+// Native OS notifications fire from the Electron main process when a comment
+// lands on a ticket (from the lead or an agent) or an approval is requested —
+// but only while the window isn't focused. This panel is the on/off switch
+// (persisted + mirrored to main) plus a test button to trigger the macOS
+// permission prompt and confirm they show up.
+function NotificationsPanel() {
+  const [enabled, setEnabled] = useState(loadNotifPref);
+  const [tested, setTested] = useState(false);
+
+  const toggle = () => {
+    const next = !enabled;
+    setEnabled(next);
+    try {
+      localStorage.setItem(NOTIF_KEY, next ? "1" : "0");
+    } catch {
+      /* storage unavailable — the pref just won't persist */
+    }
+    window.spawn.setNotificationsEnabled?.(next);
+  };
+
+  const test = async () => {
+    await window.spawn.testNotification?.();
+    setTested(true);
+    setTimeout(() => setTested(false), 2500);
+  };
+
+  return (
+    <div className="panel">
+      <div className="p-title">
+        <i className="ph ph-bell" />
+        Desktop notifications
+      </div>
+      <div className="toggle-row" style={{ marginTop: 0 }}>
+        <button className={`toggle ${enabled ? "on" : ""}`} onClick={toggle} />
+        <span>Notify me on the desktop</span>
+      </div>
+      <div className="note">
+        A macOS notification when a comment lands on a ticket (from the team lead or an agent) or a
+        run asks for approval — shown only while Spawn isn't the focused window. Click one to jump
+        straight to the ticket or the Approvals inbox.
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <button className="btn btn-secondary small-btn" onClick={test} disabled={!enabled}>
+          <i className="ph ph-paper-plane-tilt" /> Send a test notification
+        </button>
+        {tested && (
+          <span className="ok-c" style={{ marginLeft: 10, fontSize: 11.5 }}>
+            <i className="ph ph-check-circle" /> sent
+          </span>
+        )}
+      </div>
+      <div className="note" style={{ marginTop: 10 }}>
+        First time, macOS asks for permission — allow it under System Settings → Notifications →
+        Spawn if you missed the prompt.
       </div>
     </div>
   );

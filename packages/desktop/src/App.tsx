@@ -58,6 +58,17 @@ const loadSession = (): { view: View; projectId: number | null; threadId: number
   }
 };
 
+// OS-notification preference (main process fires them; this is the on/off
+// switch, mirrored to the daemon-agnostic main over IPC). Default on.
+const NOTIF_KEY = "spawn.notificationsEnabled";
+const loadNotifPref = (): boolean => {
+  try {
+    return localStorage.getItem(NOTIF_KEY) !== "0";
+  } catch {
+    return true;
+  }
+};
+
 export default function App() {
   const [session] = useState(loadSession);
   const [view, setView] = useState<View>(session.view);
@@ -80,6 +91,9 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  // A ticket to pop open on the board — set when an OS notification for a new
+  // comment is clicked; OrchestrateView opens its detail modal, then clears it.
+  const [focusTicketId, setFocusTicketId] = useState<number | null>(null);
   // Cross-view jump: set thread after the Threads view loads its list.
   const jumpRef = useRef<number | null>(null);
   // Rail projects: custom order + hidden set, with a manage mode for
@@ -227,6 +241,21 @@ export default function App() {
       }
     });
   }, [refreshShared]);
+
+  // Sync the saved notification preference to the main process on boot (it
+  // defaults on, but honor a prior "off"), and route notification clicks to
+  // the thing they're about.
+  useEffect(() => {
+    window.spawn.setNotificationsEnabled?.(loadNotifPref());
+    return window.spawn.onNotificationClick?.((c) => {
+      if (c.kind === "ticket") {
+        setView("orchestrate");
+        setFocusTicketId(c.ticketId);
+      } else if (c.kind === "approval") {
+        setView("approvals");
+      }
+    });
+  }, []);
 
   // ⌘K palette, ⌘N delegate sheet — gated so shortcuts don't stack overlays.
   useEffect(() => {
@@ -452,6 +481,8 @@ export default function App() {
             usage={usageToday}
             onOpenThread={openThread}
             markBusy={markBusy}
+            focusTicketId={focusTicketId}
+            onFocusHandled={() => setFocusTicketId(null)}
           />
         </div>
         <div className={`view-wrap ${view === "threads" ? "" : "off"}`}>

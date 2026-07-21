@@ -56,9 +56,18 @@ contextBridge.exposeInMainWorld("spawn", {
   listDeliverables: (threadId) => ipcRenderer.invoke("spawn:listDeliverables", threadId),
   openDir: (dir) => ipcRenderer.invoke("spawn:openDir", dir),
   revealFile: (p) => ipcRenderer.invoke("spawn:revealFile", p),
+  setNotificationsEnabled: (on) => ipcRenderer.invoke("spawn:setNotificationsEnabled", on),
+  testNotification: () => ipcRenderer.invoke("spawn:testNotification"),
   onEvent: (fn) => {
     const handler = (_e, ev) => fn(ev);
     ipcRenderer.on("spawn:event", handler);
     return () => ipcRenderer.removeListener("spawn:event", handler);
+  },
+  // Fired when the user clicks an OS notification — App uses it to navigate to
+  // the ticket / approvals inbox the notification was about.
+  onNotificationClick: (fn) => {
+    const handler = (_e, payload) => fn(payload);
+    ipcRenderer.on("spawn:notify-click", handler);
+    return () => ipcRenderer.removeListener("spawn:notify-click", handler);
   },
 });
