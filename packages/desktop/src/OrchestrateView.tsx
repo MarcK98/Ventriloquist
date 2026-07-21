@@ -22,10 +22,12 @@ function TicketCard({
   t,
   onOpen,
   onDragStart,
+  onDragEnd,
 }: {
   t: Ticket;
   onOpen: () => void;
   onDragStart: () => void;
+  onDragEnd: () => void;
 }) {
   return (
     <div
@@ -35,6 +37,7 @@ function TicketCard({
       style={{ cursor: "pointer" }}
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onClick={onOpen}
     >
       <div className="title">
@@ -57,7 +60,7 @@ function TicketCard({
           SPWN-{t.id}
         </span>
         <span style={{ marginLeft: "auto" }} className={t.running ? "ok-c" : ""}>
-          {t.running ? "running…" : t.thread_id != null ? "" : "backlog"}
+          {t.running ? "running…" : t.thread_id != null ? "" : t.status === "todo" ? "backlog" : "not delegated"}
         </span>
       </div>
     </div>
@@ -114,8 +117,15 @@ export default function OrchestrateView({
     if (id == null) return;
     const t = tickets.find((x) => x.id === id);
     if (!t || t.status === status) return;
+    const prevStatus = t.status;
     setTickets((prev) => prev.map((x) => (x.id === id ? { ...x, status } : x)));
-    await window.spawn.updateTicket(id, { status });
+    try {
+      await window.spawn.updateTicket(id, { status });
+    } catch {
+      // Roll the optimistic move back — the card must not lie about where
+      // the daemon thinks it is.
+      setTickets((prev) => prev.map((x) => (x.id === id ? { ...x, status: prevStatus } : x)));
+    }
   };
 
   // Clicking any card — backlog or delegated — opens the detail modal
@@ -194,6 +204,11 @@ export default function OrchestrateView({
                     onDragStart={() => {
                       dragTicket.current = t.id;
                     }}
+                    onDragEnd={() => {
+                      // Dropped outside any column — clear the highlight.
+                      dragTicket.current = null;
+                      setDragOverCol(null);
+                    }}
                   />
                 ))}
                 {col.key === "todo" && (
@@ -262,7 +277,13 @@ export default function OrchestrateView({
               disabled={!task.trim() || target === "" || sending}
               onClick={delegate}
             >
-              {sending ? "…" : "Delegate ↵"}
+              {sending ? (
+                <>
+                  <i className="ph ph-circle-notch spin" /> Delegating…
+                </>
+              ) : (
+                "Delegate ⌘↵"
+              )}
             </button>
           </div>
         </div>

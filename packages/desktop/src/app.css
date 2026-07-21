@@ -17,6 +17,42 @@ body { font-size: 13px; overflow: hidden; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .pulse { animation: pulse 1.6s infinite; }
 
+/* ── Motion layer ────────────────────────────────────────────────────────── */
+/* Eased hovers + a pressed state on every interactive row/card. Instant
+   color snaps read as unfinished; 100ms eases read as Discord. */
+.nav-item, .nav-project, .thread-item, .run-row, .ctx-item, .palette .result,
+.inbox-bell, .nav-edit, .icon-btn, .ghost-card, .mcp-chip, .tag.pick,
+.subnav button, .range-seg button, .seg2 button, .tk-file, .mcp-linkbtn,
+.palette-trigger button, .toggle, .bcard {
+  transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease),
+    opacity var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+}
+.nav-item:active, .nav-project:active, .thread-item:active, .run-row:active,
+.palette .result:active, .ctx-item:active, .subnav button:active {
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
+}
+.bcard.live:hover, .bcard.paused:hover { box-shadow: var(--shadow-md); }
+.bcard.live:active, .bcard.paused:active { transform: scale(0.99); }
+.ghost-card:active, .tag.pick:active { transform: scale(0.98); }
+
+/* Overlays fade+scale in; the toast slides up. Closes stay instant — exit
+   animation needs unmount orchestration and isn't worth the wiring. */
+@keyframes overlay-in { from { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.975) translateY(6px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
+.overlay { animation: overlay-in var(--dur-2) var(--ease); }
+.overlay > .palette, .overlay > .sheet { animation: pop-in var(--dur-2) var(--ease); }
+.toast { animation: toast-in 180ms var(--ease); }
+
+/* View switches: the shown view fades in. Views stay mounted inside a
+   display-toggled wrapper (state/scroll survive switching); @starting-style
+   fires each time a view is re-revealed. */
+.view-wrap { display: contents; }
+.view-wrap.off { display: none; }
+.view { opacity: 1; transition: opacity var(--dur-2) var(--ease); }
+@starting-style { .view { opacity: 0; } }
+
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
 /* The window has no native title bar (titleBarStyle: hiddenInset) — this bar
    IS the title bar: draggable, with interactive children opted back out. */
@@ -99,6 +135,12 @@ code.pill { font-size: 11px; background: var(--color-neutral-900); padding: 1px 
 .orchestrate { display: grid; grid-template-columns: 1fr 336px; min-height: 0; flex: 1; }
 .board-wrap { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; min-width: 0; overflow: hidden; }
 .board-cols { flex: 1; display: grid; grid-auto-columns: minmax(220px, 1fr); grid-auto-flow: column; gap: 14px; min-height: 0; overflow-x: auto; }
+/* Visible (thin) scrollbars on the surfaces that overflow at narrow widths —
+   off-screen columns/projects must be discoverable, not hidden. */
+.board-cols::-webkit-scrollbar, .nav-projects::-webkit-scrollbar { width: 8px; height: 8px; }
+.board-cols::-webkit-scrollbar-thumb, .nav-projects::-webkit-scrollbar-thumb { background: var(--color-neutral-800); border-radius: 4px; }
+.board-cols::-webkit-scrollbar-thumb:hover, .nav-projects::-webkit-scrollbar-thumb:hover { background: var(--color-neutral-700); }
+.board-cols::-webkit-scrollbar-track, .nav-projects::-webkit-scrollbar-track { background: transparent; }
 .board-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; overflow-y: auto; border-radius: var(--radius-md); }
 .board-col.drop-target { background: color-mix(in srgb, var(--color-accent) 6%, transparent); outline: 1px dashed var(--color-accent-700); }
 .bcard { min-width: 0; }
@@ -172,19 +214,73 @@ code.pill { font-size: 11px; background: var(--color-neutral-900); padding: 1px 
 .chat-head .name { font: 500 14px var(--font-heading); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-head .sub { font-size: 11.5px; color: var(--color-neutral-600); }
 .messages { flex: 1; overflow-y: auto; padding: 8px 22px; display: flex; flex-direction: column; gap: 14px; }
-.msg .who { font: 500 10.5px var(--font-heading); margin-bottom: 3px; }
+.msg .who { font: 500 10.5px var(--font-heading); margin-bottom: 3px; display: flex; align-items: baseline; gap: 8px; }
+.msg .who .ts { font: 400 10px var(--font-body); color: var(--color-neutral-600); }
 .msg.user .who { color: var(--color-accent-300); }
 .msg.assistant .who { color: oklch(0.72 0.1 150); }
+/* Discord-style grouping: consecutive same-author messages within 5 min
+   drop the header and tuck up under the previous one. */
+.msg.grouped { margin-top: -9px; }
 .msg pre { white-space: pre-wrap; word-break: break-word; font: 13.5px/1.55 var(--font-body); margin: 0; max-width: 680px; color: var(--color-neutral-200); }
 .msg.user pre { color: var(--color-text); }
 .msg.system pre { color: var(--color-neutral-500); font-style: italic; font-size: 12.5px; }
+
+/* Day divider */
+.day-div { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
+.day-div .line { flex: 1; height: 1px; background: var(--color-neutral-900); }
+.day-div .lbl { font-size: 10.5px; color: var(--color-neutral-600); flex: none; }
+
+/* Markdown body (assistant messages) */
+.md { max-width: 680px; font: 13.5px/1.55 var(--font-body); color: var(--color-neutral-200); }
+.md > *:first-child { margin-top: 0; }
+.md > *:last-child { margin-bottom: 0; }
+.md p { margin: 0 0 8px; }
+.md h1, .md h2, .md h3, .md h4 { font-size: 14.5px; margin: 12px 0 6px; letter-spacing: 0; }
+.md ul, .md ol { margin: 0 0 8px; padding-left: 22px; }
+.md li { margin-bottom: 2px; }
+.md blockquote { margin: 0 0 8px; padding: 2px 0 2px 10px; border-left: 3px solid var(--color-neutral-700); color: var(--color-neutral-400); }
+.md a { color: var(--color-accent-300); }
+.md table { border-collapse: collapse; margin: 0 0 8px; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--color-neutral-800); padding: 4px 9px; }
+.md code { font: 12px ui-monospace, Menlo, monospace; background: var(--color-neutral-900); border-radius: 4px; padding: 1px 5px; color: var(--color-accent-200); }
+.md .codeblock { position: relative; margin: 0 0 8px; background: var(--color-neutral-900); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md); overflow: hidden; }
+.md .codeblock pre { margin: 0; padding: 10px 12px; overflow-x: auto; font: 12px/1.55 ui-monospace, Menlo, monospace; color: var(--color-neutral-200); max-width: none; }
+.md .codeblock code { background: none; padding: 0; color: inherit; font: inherit; }
+.md .codeblock .cb-head { display: flex; align-items: center; padding: 4px 8px 4px 12px; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-neutral-500); border-bottom: 1px solid var(--color-neutral-800); background: color-mix(in srgb, #000 18%, transparent); }
+.md .codeblock .cb-copy { margin-left: auto; background: none; border: 0; color: var(--color-neutral-500); cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-family: inherit; transition: color var(--dur-1) var(--ease); }
+.md .codeblock .cb-copy:hover { color: var(--color-text); }
+/* highlight.js token colors on the Nocturne ground */
+.md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-literal { color: var(--color-accent-300); }
+.md .hljs-string, .md .hljs-attr { color: oklch(0.78 0.1 150); }
+.md .hljs-number, .md .hljs-symbol { color: oklch(0.8 0.11 80); }
+.md .hljs-comment, .md .hljs-quote { color: var(--color-neutral-600); font-style: italic; }
+.md .hljs-title, .md .hljs-name, .md .hljs-function { color: var(--color-accent-2-300); }
+.md .hljs-built_in, .md .hljs-type { color: oklch(0.78 0.09 220); }
+
+/* Scroll anchoring affordances */
+.chat-scroll-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.jump-pill { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; padding: 5px 14px; border: 1px solid var(--color-accent-700); border-radius: 999px; background: color-mix(in srgb, var(--color-accent-900) 88%, transparent); color: var(--color-accent-200); font: 500 11.5px var(--font-heading); cursor: pointer; box-shadow: var(--shadow-md); animation: toast-in 140ms var(--ease); transition: background-color var(--dur-1) var(--ease); }
+.jump-pill:hover { background: var(--color-accent-800); }
+.load-older { align-self: center; margin: 2px 0 4px; background: none; border: 0; color: var(--color-neutral-500); font-size: 11px; cursor: pointer; padding: 4px 10px; border-radius: var(--radius-md); font-family: inherit; transition: color var(--dur-1) var(--ease); }
+.load-older:hover { color: var(--color-accent-300); }
+.send-error { display: flex; align-items: center; gap: 8px; margin: 0 22px 6px; padding: 6px 11px; border-radius: var(--radius-md); border: 1px solid color-mix(in srgb, oklch(0.68 0.14 25) 50%, transparent); background: color-mix(in srgb, oklch(0.68 0.14 25) 10%, transparent); font-size: 11.5px; color: oklch(0.78 0.12 25); }
+.send-error button { margin-left: auto; background: none; border: 0; color: inherit; cursor: pointer; font-size: 11.5px; text-decoration: underline; font-family: inherit; }
+
+/* Unread affordances (threads list + rails) */
+.thread-item.unread .t { font-weight: 600; color: var(--color-text); }
+.unread-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--color-accent-400); }
+.unread-count { margin-left: auto; flex: none; font: 600 9.5px var(--font-heading); background: var(--color-accent); color: #161826; border-radius: 8px; padding: 1px 6px; }
 .msg.tool { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--color-neutral-400); }
 .msg.tool .ts { color: var(--color-neutral-600); font-size: 10.5px; flex: none; }
 .msg.tool .tool-name { color: var(--color-neutral-300); }
 .msg.tool .tool-in { color: var(--color-neutral-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
 .composer { padding: 12px 22px 18px; }
 .composer .box { display: flex; align-items: center; gap: 10px; background: var(--color-surface); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-lg); padding: 8px 8px 8px 14px; box-shadow: 0 0 24px color-mix(in srgb, var(--color-accent) 7%, transparent); }
-.composer textarea { flex: 1; background: none; border: 0; resize: none; height: 40px; color: var(--color-text); font: 13px/1.5 var(--font-body); outline: none; padding: 8px 0 0; }
+/* Autosize composer: grows with the draft up to ~10 lines (field-sizing is
+   native in this Electron's Chromium). */
+.composer .box { align-items: flex-end; }
+.composer textarea { flex: 1; min-width: 0; background: none; border: 0; resize: none; field-sizing: content; min-height: 22px; max-height: 200px; color: var(--color-text); font: 13px/1.5 var(--font-body); outline: none; padding: 6px 0; }
+.composer .box .btn { flex: none; margin-bottom: 4px; }
 .composer textarea::placeholder { color: var(--color-neutral-500); }
 .working { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--color-neutral-500); }
 .queued-note { margin-top: 6px; font-size: 11px; color: var(--color-accent); opacity: 0.85; }

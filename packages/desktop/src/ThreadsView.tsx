@@ -3,6 +3,7 @@ import type { Project, Thread } from "./types";
 import ChatThread from "./ChatThread";
 import ContextRail from "./ContextRail";
 import ContextMenu, { type MenuEntry } from "./ContextMenu";
+import { useEscapeToClose } from "./hooks";
 
 // Threads — thread list for the selected project (project picked in the side
 // nav), chat center, context rail right. The team-lead console is the pinned
@@ -21,6 +22,7 @@ export default function ThreadsView({
   markBusy,
   teamLeadProjectId,
   refreshTick,
+  unread,
 }: {
   projectId: number | null;
   projects: Project[];
@@ -30,6 +32,7 @@ export default function ThreadsView({
   markBusy: (id: number) => void;
   teamLeadProjectId: number | null;
   refreshTick: number;
+  unread: Map<number, number>;
 }) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const project = projects.find((p) => p.id === projectId) ?? null;
@@ -73,6 +76,8 @@ export default function ThreadsView({
   useEffect(() => {
     if (renaming) renameRef.current?.select();
   }, [renaming]);
+
+  useEscapeToClose(() => setConfirmDelete(null), confirmDelete != null);
 
   const openThread = async () => {
     if (projectId == null) return;
@@ -191,7 +196,7 @@ export default function ThreadsView({
               key={t.id}
               className={`thread-item ${t.id === threadId ? "active" : ""} ${
                 menu?.thread.id === t.id ? "menu-target" : ""
-              }`}
+              } ${(unread.get(t.id) ?? 0) > 0 ? "unread" : ""}`}
               onClick={() => setThreadId(t.id)}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -200,13 +205,19 @@ export default function ThreadsView({
             >
               {busyThreads.has(t.id) ? (
                 <span className="dot-live pulse" />
+              ) : (unread.get(t.id) ?? 0) > 0 ? (
+                <span className="unread-dot" />
               ) : t.kind === "teamlead" ? (
                 <i className="ph ph-compass" style={{ color: "var(--color-accent)", fontSize: 14 }} />
               ) : (
                 <span className={t.status === "active" ? "dot-idle" : "chip"} />
               )}
               <span className="t">{t.title}</span>
-              <span className="k">{t.kind === "chat" ? "" : t.kind}</span>
+              {(unread.get(t.id) ?? 0) > 0 ? (
+                <span className="unread-count">{unread.get(t.id)}</span>
+              ) : (
+                <span className="k">{t.kind === "chat" ? "" : t.kind}</span>
+              )}
             </button>
           )
         )}

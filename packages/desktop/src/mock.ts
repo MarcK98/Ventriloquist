@@ -261,19 +261,77 @@ const map: MapData = {
 
 let clipReads = 0; // mock clipboard read counter (token-capture flow)
 
+// Real event bus: mutations emit the same events the daemon would, so the
+// browser harness exercises streaming, busy states, unread badges and the
+// approvals flow instead of dead-ending on no-ops.
+type MockHandler = (ev: { type: string; payload: any }) => void;
+const handlers = new Set<MockHandler>();
+const emit = (type: string, payload: any) => {
+  handlers.forEach((h) => h({ type, payload }));
+};
+let nextMsgId = 1000;
+const appendMessage = (threadId: number, role: Message["role"], text: string, seq: number): Message => {
+  const m: Message = {
+    id: nextMsgId++,
+    thread_id: threadId,
+    role,
+    text,
+    tool_name: null,
+    tool_input: null,
+    seq,
+    created_at: new Date().toISOString(),
+  };
+  messages.push(m);
+  return m;
+};
+// Fake a streamed agent reply: turn:start → token deltas → turn:text → turn:done.
+const streamReply = (threadId: number, reply: string) => {
+  emit("turn:start", { threadId });
+  const words = reply.split(" ");
+  let i = 0;
+  const tick = () => {
+    if (i < words.length) {
+      emit("turn:delta", { threadId, text: (i === 0 ? "" : " ") + words[i] });
+      i++;
+      setTimeout(tick, 40);
+    } else {
+      const m = appendMessage(threadId, "assistant", reply, 99);
+      emit("turn:text", { threadId, message: m });
+      emit("turn:done", { threadId, queued: 0 });
+    }
+  };
+  setTimeout(tick, 350);
+};
+
 export function installMock() {
   window.spawn = {
     listProjects: async () => projects,
     listThreads: async (projectId) => threads.filter((t) => t.project_id === projectId),
-    createThread: async ({ projectId, title, kind }) =>
-      mkThread(90 + Math.floor(Math.random() * 100), projectId, (kind as Thread["kind"]) ?? "chat", title || "New thread"),
+    createThread: async ({ projectId, title, kind }) => {
+      const t = mkThread(90 + Math.floor(Math.random() * 100), projectId, (kind as Thread["kind"]) ?? "chat", title || "New thread");
+      threads.push(t);
+      emit("thread:created", { id: t.id });
+      return t;
+    },
     renameThread: async (threadId, title) => ({ ...threads[0], id: threadId, title }),
     setThreadStatus: async (threadId, status) => ({ ...threads[0], id: threadId, status }),
     deleteThread: async () => ({ ok: true }),
     listMessages: async (threadId) => messages.filter((m) => m.thread_id === threadId),
-    sendMessage: async (threadId) => ({ threadId, started: true }),
+    sendMessage: async (threadId, text) => {
+      appendMessage(threadId, "user", text, 98);
+      streamReply(threadId, "Understood — I'll fold that in. Working on it now; I'll report back when the change is verified.");
+      return { threadId, started: true };
+    },
     cancelTurn: async () => true,
-    resolveApproval: async () => true,
+    resolveApproval: async (id, allow) => {
+      const idx = approvals.findIndex((a) => a.id === id);
+      if (idx >= 0) {
+        const [a] = approvals.splice(idx, 1);
+        decisions.unshift({ ...a, allow, at: Date.now() });
+        emit("approval:resolved", { id });
+      }
+      return true;
+    },
     // Clone on read to mirror the daemon's JSON-RPC boundary (fresh object each
     // call) — otherwise React bails on setSettings with the same mutated ref.
     getProjectSettings: async (projectId) =>
@@ -358,10 +416,21 @@ export function installMock() {
     },
     delegateTicket: async (ticketId) => {
       const t = tickets.find((x) => x.id === ticketId)!;
+      const id = 90 + Math.floor(Math.random() * 900);
       tickets = tickets.map((x) =>
-        x.id === ticketId ? { ...x, status: "in-progress" as const, thread_id: 91, running: true } : x
+        x.id === ticketId ? { ...x, status: "in-progress" as const, thread_id: id, running: true } : x
       );
-      return mkThread(91, t.project_id, "ticket", t.title, `ticket/91-mock`);
+      const th = mkThread(id, t.project_id, "ticket", t.title, `ticket/${id}-mock`);
+      threads.push(th);
+      activeThreads.push({
+        ...th,
+        project_name: projects.find((p) => p.id === t.project_id)?.name ?? "?",
+        running: true,
+        liveTokens: 900,
+      });
+      emit("thread:created", { id });
+      streamReply(id, "Reading the ticket and starting on it now.");
+      return th;
     },
     getTicket: async (ticketId): Promise<TicketDetail> => {
       const t = tickets.find((x) => x.id === ticketId)!;
@@ -410,7 +479,23 @@ export function installMock() {
       return a;
     },
     getTeamLeadProject: async () => projects[3],
-    delegateTask: async ({ projectId, task }) => mkThread(91, projectId, "ticket", task.split("\n")[0].slice(0, 40), "ticket/91-mock"),
+    delegateTask: async ({ projectId, task }) => {
+      const id = 90 + Math.floor(Math.random() * 900);
+      const title = task.split("\n")[0].slice(0, 40);
+      const t = mkThread(id, projectId, "ticket", title, `ticket/${id}-mock`);
+      threads.push(t);
+      activeThreads.push({
+        ...t,
+        project_name: projects.find((p) => p.id === projectId)?.name ?? "?",
+        running: true,
+        liveTokens: 1200,
+      });
+      tickets = [mkTicket(id, projectId, title, "in-progress", id, t.branch, true), ...tickets];
+      emit("thread:created", { id });
+      appendMessage(id, "user", task, 0);
+      streamReply(id, "Picked up the task — scoping it now and starting on a branch.");
+      return t;
+    },
     listActiveThreads: async () => activeThreads,
     getThreadContext: async (threadId) => ctxFor(threadId),
     cleanupThread: async () => ({ ok: true }),
@@ -440,6 +525,9 @@ export function installMock() {
         : { dir: null, files: [] },
     openDir: async () => {},
     revealFile: async () => {},
-    onEvent: () => () => {},
+    onEvent: (h) => {
+      handlers.add(h as MockHandler);
+      return () => handlers.delete(h as MockHandler);
+    },
   };
 }

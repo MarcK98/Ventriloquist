@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Project, TicketDetail, TicketStatus } from "./types";
+import { useEscapeToClose } from "./hooks";
 
 // Ticket detail modal (opened by clicking any card on the Orchestrate board).
 // Shows title + description (editable), the comment thread, and attachments.
@@ -14,7 +15,7 @@ const STATUSES: { key: TicketStatus; label: string }[] = [
   { key: "in-review", label: "In review" },
   { key: "done", label: "Done" },
 ];
-const EFFORTS = ["low", "medium", "high"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const MODELS = ["haiku", "sonnet", "opus", "fable"];
 
 const AUTHOR_LABEL: Record<string, string> = { human: "you", lead: "team lead", agent: "agent" };
@@ -49,6 +50,7 @@ export default function TicketModal({
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const commentsEnd = useRef<HTMLDivElement | null>(null);
 
   // Refresh the ticket (comments/attachments/status) without clobbering any
@@ -73,21 +75,33 @@ export default function TicketModal({
   }, [ticketId]);
 
   // Live: any comment/attachment/status change on THIS ticket re-fetches.
+  // Turn events refetch only when they belong to this ticket's thread —
+  // unrelated runs shouldn't hammer getTicket.
+  const threadIdRef = useRef<number | null>(null);
+  threadIdRef.current = t?.thread_id ?? null;
   useEffect(() => {
     return window.spawn.onEvent((ev) => {
       if (
         ((ev.type === "ticket:comment" || ev.type === "ticket:attachment") && ev.payload.ticketId === ticketId) ||
         (ev.type === "ticket:updated" && ev.payload.id === ticketId) ||
-        ev.type === "turn:start" ||
-        ev.type === "turn:done"
+        ((ev.type === "turn:start" || ev.type === "turn:done") &&
+          threadIdRef.current != null &&
+          ev.payload.threadId === threadIdRef.current)
       ) {
         load();
       }
     });
   }, [ticketId, load]);
 
+  useEscapeToClose(onClose, confirmingDelete === false);
+
+  // Follow new comments only while the reader is already near the bottom.
+  const commentsBox = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    commentsEnd.current?.scrollIntoView({ block: "end" });
+    const el = commentsBox.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) commentsEnd.current?.scrollIntoView({ block: "end" });
   }, [t?.comments.length]);
 
   if (!t) return null;
@@ -136,7 +150,7 @@ export default function TicketModal({
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete ticket SPWN-${ticketId}? This can't be undone.`)) return;
+    setConfirmingDelete(false);
     setBusy(true);
     try {
       await window.spawn.deleteTicket(ticketId);
@@ -153,8 +167,8 @@ export default function TicketModal({
   };
 
   return (
-    <div className="overlay center" onClick={onClose}>
-      <div className="sheet tk-modal" onClick={(e) => e.stopPropagation()}>
+    <div className="overlay center" onPointerDown={onClose}>
+      <div className="sheet tk-modal" onPointerDown={(e) => e.stopPropagation()}>
         <div className="s-head">
           <span className="mono" style={{ fontSize: 11.5, color: "var(--color-neutral-600)" }}>
             SPWN-{t.id}
@@ -167,7 +181,7 @@ export default function TicketModal({
           </span>
           <span className="spacer" style={{ marginLeft: "auto" }} />
           {t.thread_id != null && (
-            <button className="btn small-btn" onClick={() => onOpenThread(t.project_id, t.thread_id!)}>
+            <button className="btn btn-secondary small-btn" onClick={() => onOpenThread(t.project_id, t.thread_id!)}>
               <i className="ph ph-arrow-square-out" /> Open thread
             </button>
           )}
@@ -234,7 +248,7 @@ export default function TicketModal({
                     {effort || "effort"}
                   </span>
                   <button className="btn btn-primary small-btn" disabled={busy} onClick={delegate}>
-                    <i className="ph ph-paper-plane-tilt" /> Delegate
+                    <i className={`ph ${busy ? "ph-circle-notch spin" : "ph-paper-plane-tilt"}`} /> Delegate
                   </button>
                 </>
               )}
@@ -246,7 +260,7 @@ export default function TicketModal({
                 <i className="ph ph-paperclip" />
                 <span className="tk-sect-label">Attachments</span>
                 <span className="line" />
-                <button className="btn small-btn" onClick={attach}>
+                <button className="btn btn-ghost small-btn" onClick={attach}>
                   <i className="ph ph-plus" /> Add
                 </button>
               </div>
@@ -268,7 +282,7 @@ export default function TicketModal({
             </div>
 
             <span className="tk-spring" />
-            <button className="tk-delete" onClick={remove} disabled={busy}>
+            <button className="tk-delete" onClick={() => setConfirmingDelete(true)} disabled={busy}>
               <i className="ph ph-trash" /> Delete ticket
             </button>
           </div>
@@ -280,7 +294,7 @@ export default function TicketModal({
               <span className="tk-sect-label">Comments</span>
               {t.comments.length > 0 && <span className="tk-count">{t.comments.length}</span>}
             </div>
-            <div className="tk-comments">
+            <div className="tk-comments" ref={commentsBox}>
               {t.comments.length === 0 && <div className="tk-empty">No comments yet.</div>}
               {t.comments.map((c) => (
                 <div key={c.id} className={`tk-c ${c.author_kind}`}>
@@ -319,11 +333,33 @@ export default function TicketModal({
                 onClick={post}
                 disabled={!comment.trim() || posting}
               >
-                {posting ? "…" : "Comment ↵"}
+                {posting ? <i className="ph ph-circle-notch spin" /> : "Comment ⌘↵"}
               </button>
             </div>
           </div>
         </div>
+
+        {confirmingDelete && (
+          <div className="overlay center" onPointerDown={() => setConfirmingDelete(false)}>
+            <div className="sheet" style={{ width: 400 }} onPointerDown={(e) => e.stopPropagation()}>
+              <div className="s-head">
+                <i className="ph ph-trash" style={{ color: "oklch(0.72 0.15 25)" }} />
+                Delete ticket
+              </div>
+              <p style={{ fontSize: 13, color: "var(--color-neutral-300)", lineHeight: 1.5, margin: 0 }}>
+                Delete <strong>SPWN-{t.id}</strong> and its comments? This can't be undone.
+              </p>
+              <div className="s-foot" style={{ justifyContent: "flex-end" }}>
+                <button className="btn btn-secondary" onClick={() => setConfirmingDelete(false)}>
+                  Cancel
+                </button>
+                <button className="btn danger" onClick={remove}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

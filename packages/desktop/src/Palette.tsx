@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActiveThread, Project } from "./types";
+import type { ActiveThread, Project, Thread } from "./types";
 
 // ⌘K command palette: actions, active threads, and projects, filtered as you
 // type. Enter (or click) runs the selected row and closes.
@@ -30,15 +30,47 @@ export default function Palette({
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Every thread of every project — the palette must reach idle threads too,
+  // not just the active list. Fetched once per open; cheap local RPCs.
+  const [allThreads, setAllThreads] = useState<(Thread & { project_name: string })[]>([]);
+  useEffect(() => {
+    let stale = false;
+    Promise.all(
+      projects.map((p) =>
+        window.spawn
+          .listThreads(p.id)
+          .then((ts) => ts.map((t) => ({ ...t, project_name: p.name })))
+          .catch(() => [] as (Thread & { project_name: string })[])
+      )
+    ).then((groups) => {
+      if (!stale) setAllThreads(groups.flat());
+    });
+    return () => {
+      stale = true;
+    };
+  }, [projects]);
 
   const list = useMemo<PaletteAction[]>(() => {
-    const threadRows: PaletteAction[] = active.map((t) => ({
-      id: `thread-${t.id}`,
-      label: `${t.project_name} · ${t.title}`,
-      kind: t.running ? "running" : t.kind,
-      icon: "ph-chats-circle",
-      run: () => onOpenThread(t.project_id, t.id),
-    }));
+    const activeIds = new Set(active.map((t) => t.id));
+    const running = new Set(active.filter((t) => t.running).map((t) => t.id));
+    const threadRows: PaletteAction[] = [
+      ...active.map((t) => ({
+        id: `thread-${t.id}`,
+        label: `${t.project_name} · ${t.title}`,
+        kind: t.running ? "running" : t.kind,
+        icon: "ph-chats-circle",
+        run: () => onOpenThread(t.project_id, t.id),
+      })),
+      ...allThreads
+        .filter((t) => !activeIds.has(t.id))
+        .map((t) => ({
+          id: `thread-${t.id}`,
+          label: `${t.project_name} · ${t.title}`,
+          kind: running.has(t.id) ? "running" : t.kind,
+          icon: "ph-chats-circle",
+          run: () => onOpenThread(t.project_id, t.id),
+        })),
+    ];
     const projectRows: PaletteAction[] = projects.map((p) => ({
       id: `project-${p.id}`,
       label: p.name,
@@ -52,14 +84,16 @@ export default function Palette({
     return all
       .filter((r) => r.label.toLowerCase().includes(needle) || r.kind.toLowerCase().includes(needle))
       .slice(0, 12);
-  }, [q, actions, active, projects, onOpenThread, onOpenProject]);
+  }, [q, actions, active, allThreads, projects, onOpenThread, onOpenProject]);
 
   useEffect(() => setSel(0), [q]);
   useEffect(() => inputRef.current?.focus(), []);
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+    // pointerdown, not click: releasing a text-selection drag over the
+    // backdrop must not dismiss the palette.
+    <div className="overlay" onPointerDown={onClose}>
+      <div className="palette" onPointerDown={(e) => e.stopPropagation()}>
         <input
           ref={inputRef}
           value={q}

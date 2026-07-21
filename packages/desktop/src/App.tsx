@@ -41,11 +41,33 @@ const loadPrefs = (): ProjectPrefs => {
   }
 };
 
+// Last open view/project/thread — restored on relaunch so the app reopens
+// where you left it (Discord behavior), not on a fixed home view.
+const SESSION_KEY = "spawn.session";
+const loadSession = (): { view: View; projectId: number | null; threadId: number | null } => {
+  try {
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY) ?? "");
+    const views: View[] = ["orchestrate", "threads", "map", "approvals", "usage", "settings"];
+    return {
+      view: views.includes(s.view) ? s.view : "orchestrate",
+      projectId: typeof s.projectId === "number" ? s.projectId : null,
+      threadId: typeof s.threadId === "number" ? s.threadId : null,
+    };
+  } catch {
+    return { view: "orchestrate", projectId: null, threadId: null };
+  }
+};
+
 export default function App() {
-  const [view, setView] = useState<View>("orchestrate");
+  const [session] = useState(loadSession);
+  const [view, setView] = useState<View>(session.view);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<number | null>(null);
-  const [threadId, setThreadId] = useState<number | null>(null);
+  const [projectId, setProjectId] = useState<number | null>(session.projectId);
+  const [threadId, setThreadId] = useState<number | null>(session.threadId);
+  // Session-scoped unread counts per thread — bumped when a reply lands in a
+  // thread that isn't open, cleared on open. Feeds the thread list, the
+  // projects rail and the Threads nav badge.
+  const [unread, setUnread] = useState<Map<number, number>>(new Map());
   const [teamLeadProjectId, setTeamLeadProjectId] = useState<number | null>(null);
   const [active, setActive] = useState<ActiveThread[]>([]);
   const [busyThreads, setBusyThreads] = useState<Set<number>>(new Set());
@@ -103,10 +125,31 @@ export default function App() {
   }, []);
 
   const refreshShared = useCallback(() => {
-    window.spawn.listActiveThreads().then(setActive).catch(() => {});
+    window.spawn
+      .listActiveThreads()
+      .then((a) => {
+        setActive(a);
+        // Seed busy from the daemon's view — after an app reload mid-run the
+        // live turn:start already happened and would otherwise be missed.
+        setBusyThreads((prev) => {
+          const next = new Set(prev);
+          for (const t of a) if (t.running) next.add(t.id);
+          return next;
+        });
+      })
+      .catch(() => {});
     window.spawn.listApprovals().then(setPendingApprovals).catch(() => {});
     window.spawn.getUsage(1).then(setUsageToday).catch(() => {});
   }, []);
+
+  // Persist where we are (view/project/thread) for relaunch restore.
+  useEffect(() => {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({ view, projectId, threadId }));
+    } catch {
+      /* fine */
+    }
+  }, [view, projectId, threadId]);
 
   useEffect(() => {
     window.spawn.listProjects().then(setProjects);
@@ -116,6 +159,13 @@ export default function App() {
       .catch(() => {});
     refreshShared();
   }, [refreshShared]);
+
+  // Live refs so the event handler can tell whether a thread is on screen
+  // without resubscribing on every navigation.
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const threadRef = useRef(threadId);
+  threadRef.current = threadId;
 
   useEffect(() => {
     return window.spawn.onEvent((ev) => {
@@ -133,6 +183,20 @@ export default function App() {
         // If the open thread just got deleted (here or elsewhere), drop the
         // selection so the chat pane doesn't keep pointing at a dead row.
         setThreadId((cur) => (cur === ev.payload.id ? null : cur));
+        if (jumpRef.current === ev.payload.id) jumpRef.current = null;
+        setUnread((prev) => {
+          if (!prev.has(ev.payload.id)) return prev;
+          const next = new Map(prev);
+          next.delete(ev.payload.id);
+          return next;
+        });
+      }
+      if (ev.type === "turn:text") {
+        // A reply landed. If that thread isn't the one on screen, mark it
+        // unread — the core Discord mechanic.
+        const tId = ev.payload.threadId;
+        const onScreen = viewRef.current === "threads" && threadRef.current === tId;
+        if (!onScreen) setUnread((prev) => new Map(prev).set(tId, (prev.get(tId) ?? 0) + 1));
       }
       if (ev.type === "turn:start") {
         setBusyThreads((prev) => new Set(prev).add(ev.payload.threadId));
@@ -164,24 +228,36 @@ export default function App() {
     });
   }, [refreshShared]);
 
-  // ⌘K palette, ⌘N delegate sheet.
+  // ⌘K palette, ⌘N delegate sheet — gated so shortcuts don't stack overlays.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        if (sheetOpen) return;
         e.preventDefault();
         setPaletteOpen((o) => !o);
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+        if (paletteOpen || sheetOpen) return;
         e.preventDefault();
         setSheetOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [paletteOpen, sheetOpen]);
+
+  const clearUnread = useCallback((tId: number) => {
+    setUnread((prev) => {
+      if (!prev.has(tId)) return prev;
+      const next = new Map(prev);
+      next.delete(tId);
+      return next;
+    });
   }, []);
 
   const openThread = useCallback(
     (pId: number, tId: number) => {
       setView("threads");
+      clearUnread(tId);
       if (pId === projectId) {
         setThreadId(tId);
       } else {
@@ -190,7 +266,7 @@ export default function App() {
         setThreadId(tId);
       }
     },
-    [projectId]
+    [projectId, clearUnread]
   );
   const openProject = useCallback((pId: number) => {
     setView("threads");
@@ -206,14 +282,24 @@ export default function App() {
   for (const t of active) {
     if (t.running) runningByProject.set(t.project_id, (runningByProject.get(t.project_id) ?? 0) + 1);
   }
+  const unreadTotal = [...unread.values()].reduce((a, b) => a + b, 0);
+  const unreadByProject = new Map<number, number>();
+  for (const t of active) {
+    const c = unread.get(t.id);
+    if (c) unreadByProject.set(t.project_id, (unreadByProject.get(t.project_id) ?? 0) + c);
+  }
   // Merge event-fresh live token counts over the polled active list.
   const activeLive = active.map((t) => ({ ...t, liveTokens: liveTokens.get(t.id) ?? t.liveTokens }));
   const totalLive = [...liveTokens.values()].reduce((a, b) => a + b, 0);
   const toastThread = toast ? (active.find((t) => t.id === toast.threadId) ?? null) : null;
 
+  const toastBusy = useRef(false);
   const answerToast = (allow: boolean) => {
-    if (!toast) return;
-    window.spawn.resolveApproval(toast.id, allow);
+    if (!toast || toastBusy.current) return;
+    toastBusy.current = true;
+    window.spawn.resolveApproval(toast.id, allow).finally(() => {
+      toastBusy.current = false;
+    });
     setToast(null);
   };
 
@@ -259,7 +345,10 @@ export default function App() {
             >
               <i className={`ph ${n.icon}`} />
               {n.label}
-              {n.view === "threads" && active.length > 0 && <span className="meta">{active.length}</span>}
+              {n.view === "threads" && unreadTotal > 0 && <span className="unread-count">{unreadTotal}</span>}
+              {n.view === "threads" && unreadTotal === 0 && active.length > 0 && (
+                <span className="meta">{active.length}</span>
+              )}
               {n.view === "approvals" && pendingApprovals.length > 0 && (
                 <span className="tag tag-accent" style={{ marginLeft: "auto", padding: "0 7px", fontSize: 10.5 }}>
                   {pendingApprovals.length}
@@ -327,6 +416,8 @@ export default function App() {
                     >
                       <i className={`ph ${hidden ? "ph-eye-slash" : "ph-eye"}`} />
                     </span>
+                  ) : (unreadByProject.get(p.id) ?? 0) > 0 ? (
+                    <span className="unread-count">{unreadByProject.get(p.id)}</span>
                   ) : (
                     (runningByProject.get(p.id) ?? 0) > 0 && (
                       <span className="run-count">● {runningByProject.get(p.id)}</span>
@@ -351,7 +442,10 @@ export default function App() {
           </div>
         </nav>
 
-        {view === "orchestrate" ? (
+        {/* Views stay mounted (scroll/board/settings state survives switching);
+            the wrapper toggles display. MapView is the exception — react-flow
+            plus its poll loop is only worth running while visible. */}
+        <div className={`view-wrap ${view === "orchestrate" ? "" : "off"}`}>
           <OrchestrateView
             projects={projects}
             active={activeLive}
@@ -359,29 +453,36 @@ export default function App() {
             onOpenThread={openThread}
             markBusy={markBusy}
           />
-        ) : view === "threads" ? (
+        </div>
+        <div className={`view-wrap ${view === "threads" ? "" : "off"}`}>
           <ThreadsView
             projectId={projectId}
             projects={projects}
             threadId={threadId ?? jumpRef.current}
             setThreadId={(id) => {
               jumpRef.current = null;
+              if (id != null) clearUnread(id);
               setThreadId(id);
             }}
             busyThreads={busyThreads}
             markBusy={markBusy}
             teamLeadProjectId={teamLeadProjectId}
             refreshTick={refreshTick}
+            unread={unread}
           />
-        ) : view === "map" ? (
+        </div>
+        {view === "map" && (
           <MapView onOpenTeamLead={openTeamLead} onOpenProject={openProject} onOpenThread={openThread} />
-        ) : view === "approvals" ? (
-          <ApprovalsView active={activeLive} onOpenThread={openThread} />
-        ) : view === "usage" ? (
-          <UsageView />
-        ) : (
-          <SettingsView projects={projects} initialProjectId={projectId} />
         )}
+        <div className={`view-wrap ${view === "approvals" ? "" : "off"}`}>
+          <ApprovalsView active={activeLive} onOpenThread={openThread} />
+        </div>
+        <div className={`view-wrap ${view === "usage" ? "" : "off"}`}>
+          <UsageView />
+        </div>
+        <div className={`view-wrap ${view === "settings" ? "" : "off"}`}>
+          <SettingsView projects={projects} initialProjectId={projectId} />
+        </div>
       </div>
 
       {paletteOpen && (

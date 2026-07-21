@@ -118,6 +118,27 @@ export function buildGraph(
   let y = 0;
 
   for (const p of map.projects) {
+    // The team-lead home renders as the root node, not a second project box —
+    // its threads (the console) hang off the root directly.
+    if (p.id === map.teamLeadProjectId) {
+      for (const t of map.threads.filter((x) => x.projectId === p.id)) {
+        nodes.push({
+          id: `t${t.id}`,
+          type: "thread",
+          position: { x: COL_X.thread, y },
+          data: { thread: t, onOpen: () => handlers.onOpenThread(t.projectId, t.id) },
+        });
+        edges.push({
+          id: `e-tl-t${t.id}`,
+          source: "tl",
+          target: `t${t.id}`,
+          animated: t.running,
+          style: { stroke: "var(--color-accent-700)" },
+        });
+        y += THREAD_H + GAP;
+      }
+      continue;
+    }
     const threads = map.threads.filter((t) => t.projectId === p.id);
     const blockStart = y;
     for (const t of threads) {
@@ -195,8 +216,20 @@ export default function MapView({
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, POLL_MS);
-    return () => clearInterval(timer);
+    // Poll only while the window is actually visible — a hidden window
+    // shouldn't keep hitting the daemon every 20s.
+    const tick = () => {
+      if (!document.hidden) refresh();
+    };
+    const timer = setInterval(tick, POLL_MS);
+    const onVis = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [refresh]);
 
   useEffect(() => {

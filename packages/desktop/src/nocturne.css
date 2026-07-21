@@ -78,6 +78,12 @@
   --shadow-sm: 0 0 0 1px #3f424d;
   --shadow-md: 0 0 0 1px #595d6c, 0 6px 18px rgba(0,0,0,0.55);
   --shadow-lg: 0 0 0 1px #9397ab, 0 16px 40px rgba(0,0,0,0.65);
+
+  /* Motion — one shared ease + two durations; every interactive surface
+     eases instead of snapping (the Discord-feel baseline). */
+  --ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --dur-1: 100ms; /* hovers, presses */
+  --dur-2: 150ms; /* overlays, view switches */
 }
 
 body {
@@ -145,6 +151,7 @@ figcaption {
   border-radius: var(--radius-md);
 }
 .btn svg { display: block; }
+.btn { transition: background-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), opacity var(--dur-1) var(--ease); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-primary { color: var(--color-accent); border-color: var(--color-accent); }
 .btn-primary:hover { background: color-mix(in srgb, var(--color-accent) 12%, transparent); }

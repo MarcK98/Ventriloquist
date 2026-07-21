@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Project, ProjectSettings, Thread, Ticket, TicketStatus } from "./types";
+import { useEscapeToClose } from "./hooks";
 
 // Ticket sheet (design 3a) — create a backlog ticket, create-and-delegate in
 // one move, or edit an existing ticket (title/body/column, delegate, delete).
@@ -50,6 +51,8 @@ export default function TicketSheet({
     if (projectId === "") return setSettings(null);
     window.spawn.getProjectSettings(projectId).then(setSettings).catch(() => setSettings(null));
   }, [projectId]);
+
+  useEscapeToClose(onClose);
 
   // Isolation is a project-level setting (the daemon reads it per delegation),
   // so the ticket-sheet toggle flips it on the project — same as SettingsView.
@@ -116,8 +119,21 @@ export default function TicketSheet({
   };
 
   return (
-    <div className="overlay center" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+    // pointerdown, not click: a text-selection drag released over the
+    // backdrop must not destroy the form.
+    <div className="overlay center" onPointerDown={onClose}>
+      <div
+        className="sheet"
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // The buttons advertise ↵ — honor ⌘/Ctrl+Enter anywhere in the sheet.
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            if (canDelegate) delegate();
+            else create();
+          }
+        }}
+      >
         <div className="s-head">
           <i className={`ph ${editing ? "ph-pencil-simple" : "ph-plus-circle"}`} />
           {editing ? `Ticket #${ticket.id}` : "New ticket"}
@@ -261,7 +277,15 @@ export default function TicketSheet({
                 disabled={!title.trim() || projectId === "" || busyAction !== ""}
                 onClick={delegate}
               >
-                {busyAction === "delegate" ? "Delegating…" : editing ? "Delegate ↵" : "Create & delegate ↵"}
+                {busyAction === "delegate" ? (
+                <>
+                  <i className="ph ph-circle-notch spin" /> Delegating…
+                </>
+              ) : editing ? (
+                "Delegate ⌘↵"
+              ) : (
+                "Create & delegate ⌘↵"
+              )}
               </button>
             )}
           </span>

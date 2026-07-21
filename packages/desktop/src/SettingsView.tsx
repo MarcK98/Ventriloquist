@@ -219,6 +219,12 @@ export default function SettingsView({
   const [settings, setSettings] = useState<ProjectSettings | null>(null);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [savedTick, setSavedTick] = useState(0);
+  // "saved" is a transient confirmation, not a status light — fade it out.
+  useEffect(() => {
+    if (savedTick === 0) return;
+    const t = setTimeout(() => setSavedTick(0), 2000);
+    return () => clearTimeout(t);
+  }, [savedTick]);
   const [category, setCategory] = useState<Category>("overview");
   // Add-MCP-server draft (null = nothing being added).
   const [mcpDraft, setMcpDraft] = useState<McpDraft | null>(null);

@@ -304,7 +304,7 @@ declare global {
       renameThread(threadId: number, title: string): Promise<Thread>;
       setThreadStatus(threadId: number, status: Thread["status"]): Promise<Thread>;
       deleteThread(threadId: number): Promise<{ ok: boolean; reason?: string }>;
-      listMessages(threadId: number, opts?: { limit?: number }): Promise<Message[]>;
+      listMessages(threadId: number, opts?: { limit?: number; before?: number }): Promise<Message[]>;
       sendMessage(
         threadId: number,
         text: string

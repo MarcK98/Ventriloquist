@@ -32,9 +32,18 @@ export default function ApprovalsView({
     });
   }, [refresh]);
 
+  // Disable both buttons while a resolve is in flight — a double-click must
+  // not answer the same prompt twice.
+  const [resolving, setResolving] = useState<number | null>(null);
   const answer = async (id: number, allow: boolean) => {
-    await window.spawn.resolveApproval(id, allow);
-    refresh();
+    if (resolving != null) return;
+    setResolving(id);
+    try {
+      await window.spawn.resolveApproval(id, allow);
+    } finally {
+      setResolving(null);
+      refresh();
+    }
   };
 
   const threadOf = (threadId: number | null) => active.find((t) => t.id === threadId) ?? null;
@@ -66,10 +75,10 @@ export default function ApprovalsView({
                 </div>
                 <pre className="input">{JSON.stringify(a.input, null, 2)}</pre>
                 <div className="acts">
-                  <button className="btn btn-primary small-btn" onClick={() => answer(a.id, true)}>
-                    Allow once
+                  <button className="btn btn-primary small-btn" disabled={resolving != null} onClick={() => answer(a.id, true)}>
+                    {resolving === a.id ? <i className="ph ph-circle-notch spin" /> : "Allow once"}
                   </button>
-                  <button className="btn btn-ghost small-btn" onClick={() => answer(a.id, false)}>
+                  <button className="btn btn-ghost small-btn" disabled={resolving != null} onClick={() => answer(a.id, false)}>
                     Deny
                   </button>
                   {t && (
