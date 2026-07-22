@@ -145,7 +145,7 @@ export default function App() {
             contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: 24, gap: 12 }}
             keyboardShouldPersistTaps="handled"
           >
-          <Text style={{ color: C.text, fontSize: 28, fontWeight: "600" }}>Spawn</Text>
+          <Text style={{ color: C.text, fontSize: 28, fontWeight: "600" }}>AgentDeck</Text>
           <Text style={{ color: C.n500, fontSize: 13, marginBottom: 8 }}>Sign in to your relay.</Text>
           <TextInput
             style={inputStyle}
@@ -216,7 +216,7 @@ export default function App() {
           gap: 10,
         }}
       >
-        <Text style={{ color: C.text, fontSize: 17, fontWeight: "600" }}>Spawn</Text>
+        <Text style={{ color: C.text, fontSize: 17, fontWeight: "600" }}>AgentDeck</Text>
         <Dot color={status === "ready" ? C.ok : status === "daemon-offline" ? C.warn : C.n600} />
         <Text style={{ color: C.n600, fontSize: 11 }}>{status}</Text>
         <View style={{ flex: 1 }} />
