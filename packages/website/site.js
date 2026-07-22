@@ -1,4 +1,4 @@
-// Spawn marketing site — minimal behavior: mobile nav + copy button.
+// AgentDeck marketing site — minimal behavior: mobile nav + copy button.
 
 const burger = document.getElementById('nav-burger');
 const nav = document.querySelector('.nav');
