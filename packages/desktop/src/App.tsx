@@ -8,6 +8,9 @@ import UsageView from "./UsageView";
 import SettingsView from "./SettingsView";
 import Palette from "./Palette";
 import TicketSheet from "./TicketSheet";
+import Brand from "./Brand";
+import LoginView from "./LoginView";
+import OnboardingView from "./OnboardingView";
 
 // AgentDeck — Mission Control shell (design 1a): top bar (⌘K, today's tokens,
 // approvals bell), left nav (Orchestrate / Threads / Live map / Approvals /
@@ -69,7 +72,29 @@ const loadNotifPref = (): boolean => {
   }
 };
 
+// First-run gates. `spawn.authed` is set once the user signs in (or explores
+// the demo); `spawn.onboarded` once setup is done or skipped. Both are local —
+// AgentDeck is bring-your-own-subscription, so there is no server account.
+const AUTH_KEY = "spawn.authed";
+const ONBOARD_KEY = "spawn.onboarded";
+const readFlag = (k: string) => {
+  try {
+    return localStorage.getItem(k) === "1";
+  } catch {
+    return false;
+  }
+};
+const writeFlag = (k: string) => {
+  try {
+    localStorage.setItem(k, "1");
+  } catch {
+    /* fine */
+  }
+};
+
 export default function App() {
+  const [authed, setAuthed] = useState(readFlag(AUTH_KEY));
+  const [onboarded, setOnboarded] = useState(readFlag(ONBOARD_KEY));
   const [session] = useState(loadSession);
   const [view, setView] = useState<View>(session.view);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -332,11 +357,32 @@ export default function App() {
     setToast(null);
   };
 
+  if (!authed) {
+    return (
+      <LoginView
+        onAuthed={() => {
+          writeFlag(AUTH_KEY);
+          setAuthed(true);
+        }}
+      />
+    );
+  }
+  if (!onboarded) {
+    return (
+      <OnboardingView
+        onDone={() => {
+          writeFlag(ONBOARD_KEY);
+          setOnboarded(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="shell">
       <header className="topbar fade-b">
         <div className="brand">
-          <i className="ph-fill ph-broadcast" />
+          <Brand s={13} />
           AgentDeck
         </div>
         <div className="palette-trigger">

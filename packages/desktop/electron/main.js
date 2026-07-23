@@ -88,7 +88,7 @@ function createWindow() {
     height: 840,
     title: "AgentDeck",
     // Nocturne ground (--color-bg) — also paints the pre-load flash.
-    backgroundColor: "#161826",
+    backgroundColor: "#0b0c1a",
     // No native (white) title bar: traffic lights float over the app's own
     // dark top bar, which is a drag region (see .topbar in app.css).
     titleBarStyle: "hiddenInset",

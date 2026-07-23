@@ -44,6 +44,24 @@ if (!DAEMON_KEY) {
   process.exit(1);
 }
 
+// Collect a request body (bounded). Resolves to the raw string, or null if it
+// exceeded the limit / errored (in which case the socket is already destroyed).
+function readBody(req, limit) {
+  return new Promise((resolve) => {
+    let body = "";
+    let tooBig = false;
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > limit) {
+        tooBig = true;
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(tooBig ? null : body));
+    req.on("error", () => resolve(null));
+  });
+}
+
 // Provisioned accounts: { email: "scrypt$<saltHex>$<hashHex>" }. Parsed once.
 let USERS = {};
 try {
@@ -121,7 +139,7 @@ const pending = new Map(); // namespacedId -> { phone, originalId }
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "content-type",
 };
 const sendJson = (res, code, obj) => {
@@ -129,7 +147,7 @@ const sendJson = (res, code, obj) => {
   res.end(JSON.stringify(obj));
 };
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS);
     res.end();
