@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { readdirSync, readFileSync, statSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, mkdirSync, existsSync, copyFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 import { config, tokenizeArgs, dataPath } from "../config.js";
@@ -420,6 +420,27 @@ export function createDaemon() {
     return db.addTicketAttachment({ ticketId, name: basename(dest), path: dest, size: statSync(dest).size, uploadedBy });
   };
 
+  // Store an attachment from raw bytes — the remote/mobile path, where the file
+  // lives on the phone and there's no host path to copy from. `name` is the
+  // display filename (basename-sanitized), `base64` the file contents.
+  const storeTicketAttachmentBytes = (ticketId, name, base64, uploadedBy) => {
+    const safe = basename(String(name || "attachment").replace(/[/\\]/g, "_")) || "attachment";
+    const buf = Buffer.from(String(base64 || ""), "base64");
+    if (!buf.length) throw new Error("empty attachment");
+    const maxBytes = (config.attachments?.maxMb || 25) * 1024 * 1024;
+    if (buf.length > maxBytes)
+      throw new Error(`file is ${(buf.length / 1048576).toFixed(1)}MB, over the ${config.attachments?.maxMb || 25}MB limit`);
+    const dir = ticketFilesDir(ticketId);
+    let dest = join(dir, safe);
+    if (existsSync(dest)) {
+      const dot = safe.lastIndexOf(".");
+      const n = db.listTicketAttachments(ticketId).length + 1;
+      dest = join(dir, dot > 0 ? `${safe.slice(0, dot)}-${n}${safe.slice(dot)}` : `${safe}-${n}`);
+    }
+    writeFileSync(dest, buf);
+    return db.addTicketAttachment({ ticketId, name: basename(dest), path: dest, size: buf.length, uploadedBy });
+  };
+
   // A human comment wakes the team lead: it reads the ticket + comment and
   // takes the next action (delegate if backlog, steer/relay if in progress),
   // then comments back. No-op if no team-lead project is configured.
@@ -732,6 +753,16 @@ export function createDaemon() {
     addTicketAttachment: (ticketId, sourcePath, uploadedBy = "you") => {
       if (!db.getTicket(ticketId)) throw new Error(`No such ticket: ${ticketId}`);
       const attachment = storeTicketAttachment(ticketId, sourcePath, uploadedBy);
+      emit("ticket:attachment", { ticketId, attachment });
+      return attachment;
+    },
+
+    // Store an uploaded file from raw bytes — the remote/mobile path (no host
+    // file to copy). Allowed through the relay (unlike addTicketAttachment,
+    // which reads a daemon-host path and is remote-denied).
+    addTicketAttachmentBytes: (ticketId, name, base64, uploadedBy = "you") => {
+      if (!db.getTicket(ticketId)) throw new Error(`No such ticket: ${ticketId}`);
+      const attachment = storeTicketAttachmentBytes(ticketId, name, base64, uploadedBy);
       emit("ticket:attachment", { ticketId, attachment });
       return attachment;
     },

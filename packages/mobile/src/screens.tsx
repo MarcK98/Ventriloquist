@@ -12,6 +12,8 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
+import { File } from "expo-file-system";
 import { RelayClient } from "./api";
 import { C, F } from "./theme";
 import { useCachedRpc, useSpawnEvents } from "./hooks";
@@ -19,6 +21,9 @@ import { Btn, Card, Center, Chip, Dot, ErrorBar, Field, S, TAB_SPACE, fmtTok, ta
 
 const MODELS = ["haiku", "sonnet", "opus", "fable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// Mirrors the daemon's config.attachments.maxMb default — guard client-side so a
+// huge pick never gets read into memory or shipped over the relay.
+const ATTACH_MAX_MB = 25;
 
 export { ThreadScreen } from "./thread";
 export { Dot, Center } from "./ui";
@@ -154,6 +159,8 @@ const fmtCommentTime = (iso: string) => {
   if (isNaN(d.getTime())) return iso;
   return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 };
+const fmtSize = (n: number) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} KB` : `${n} B`;
 
 // Create / edit / delegate / delete a ticket (the board's row is source of truth).
 function TicketSheet({
@@ -186,6 +193,7 @@ function TicketSheet({
   const [detail, setDetail] = useState<any>(null);
   const [comment, setComment] = useState("");
   const [posting, setPosting] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const canDelegate = editing ? ticket.thread_id == null : true;
   const threadId: number | null = ticket?.thread_id ?? null;
 
@@ -194,8 +202,9 @@ function TicketSheet({
     client.rpc<any>("getTicket", ticket.id).then(setDetail).catch(() => {});
   }, [client, editing, ticket?.id]);
   useEffect(() => { loadDetail(); }, [loadDetail]);
-  // A comment (from the lead/agent) or a status flip on THIS ticket re-fetches.
-  useSpawnEvents(client, ["ticket:comment", "ticket:updated"], (ev) => {
+  // A comment/attachment (from the lead/agent) or a status flip on THIS ticket
+  // re-fetches.
+  useSpawnEvents(client, ["ticket:comment", "ticket:attachment", "ticket:updated"], (ev) => {
     if (!editing) return;
     const tid = ev.payload?.ticketId ?? ev.payload?.id;
     if (tid === ticket.id) loadDetail();
@@ -214,6 +223,39 @@ function TicketSheet({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setPosting(false);
+    }
+  };
+
+  // Attach a file from the phone: pick it, read the bytes as base64, ship them
+  // to the daemon (no host path exists on mobile — the addTicketAttachmentBytes
+  // RPC writes the bytes into the ticket's files dir).
+  const attach = async () => {
+    if (attaching || !editing) return;
+    setError("");
+    let res;
+    try {
+      res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    if (res.canceled || !res.assets?.length) return;
+    const asset = res.assets[0];
+    // Guard before reading — a huge file would OOM the phone and flood the relay
+    // (the daemon rejects it anyway at ATTACH_MAX_MB). Matches the server cap.
+    if (asset.size != null && asset.size > ATTACH_MAX_MB * 1024 * 1024) {
+      setError(`File is ${(asset.size / 1048576).toFixed(1)}MB, over the ${ATTACH_MAX_MB}MB limit.`);
+      return;
+    }
+    setAttaching(true);
+    try {
+      const base64 = await new File(asset.uri).base64();
+      await client.rpc("addTicketAttachmentBytes", ticket.id, asset.name, base64, "you");
+      loadDetail();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAttaching(false);
     }
   };
 
@@ -313,6 +355,45 @@ function TicketSheet({
 
       {editing && (
         <View style={{ marginTop: 8, borderTopWidth: 1, borderTopColor: C.n800, paddingTop: 14, gap: 12 }}>
+          {/* Attachments — pick a file off the phone; the bytes ship to the ticket. */}
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <Text style={S.cap}>
+              Attachments{detail?.attachments?.length ? ` · ${detail.attachments.length}` : ""}
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Btn label="+ Add" color={C.accent} onPress={attach} disabled={attaching} busy={attaching} />
+          </View>
+          {detail == null ? null : detail.attachments?.length ? (
+            <View style={{ gap: 8 }}>
+              {detail.attachments.map((a: any) => (
+                <Pressable
+                  key={a.id}
+                  onPress={() => tapHaptic()}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    borderWidth: 1,
+                    borderColor: C.n800,
+                    borderRadius: 9,
+                    paddingHorizontal: 12,
+                    paddingVertical: 9,
+                  }}
+                >
+                  <Text style={{ color: C.accent300, fontSize: 13 }}>📎</Text>
+                  <Text style={{ color: C.text, fontSize: 13, fontFamily: F.ui, flex: 1 }} numberOfLines={1}>
+                    {a.name}
+                  </Text>
+                  <Text style={{ color: C.dim, fontSize: 10.5, fontFamily: F.mono }}>
+                    {fmtSize(a.size)} · {a.uploaded_by || "?"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text style={S.dim}>No files yet.</Text>
+          )}
+
           <Text style={S.cap}>
             Comments{detail?.comments?.length ? ` · ${detail.comments.length}` : ""}
           </Text>
